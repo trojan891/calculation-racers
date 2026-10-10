@@ -1,0 +1,295 @@
+{
+  "entities": {
+    "Profile": {
+      "title": "Profile",
+      "description": "Public player profile and aggregated racing statistics without PII.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "nickname": { "type": "string", "minLength": 2, "maxLength": 20 },
+        "carColor": { "type": "string", "enum": ["blue", "red", "green", "purple"] },
+        "wins": { "type": "number" },
+        "totalRaces": { "type": "number" },
+        "bestTimeMs": { "type": "number" },
+        "bestScore": { "type": "number" },
+        "totalCorrect": { "type": "number" },
+        "totalWrong": { "type": "number" },
+        "isPublicProfile": { "type": "boolean" },
+        "isBanned": { "type": "boolean" },
+        "banReason": { "type": "string", "maxLength": 200 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "nickname", "carColor", "wins", "totalRaces", "bestTimeMs", "totalCorrect", "totalWrong", "isPublicProfile", "isBanned", "banReason", "createdAt", "updatedAt"]
+    },
+    "UserPrivate": {
+      "title": "UserPrivate",
+      "description": "Isolated PII document storing user email strictly restricted to owner or admin.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 254 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted administrator privilege record.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 254 },
+        "role": { "type": "string", "enum": ["admin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "createdAt"]
+    },
+    "AdminBootstrapLock": {
+      "title": "AdminBootstrapLock",
+      "description": "One-time owner administrator bootstrap lock preventing repeated claims.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "enum": ["admin_bootstrap"] },
+        "ownerUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "bootstrapped": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "bootstrapped", "createdAt"]
+    },
+    "Question": {
+      "title": "Question",
+      "description": "Multiple-choice question record without plaintext answer key.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "category": { "type": "string", "enum": ["math", "gk", "science", "current_affairs"] },
+        "subcategory": { "type": "string", "maxLength": 60 },
+        "difficulty": { "type": "string", "enum": ["easy", "medium", "hard"] },
+        "questionText": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "options": { "type": "array" },
+        "answerHash": { "type": "string", "maxLength": 128 },
+        "sourceUrl": { "type": "string", "maxLength": 500 },
+        "publishedAt": { "type": "string", "maxLength": 40 },
+        "verifiedAt": { "type": "string", "maxLength": 40 },
+        "expiresAt": { "type": "string", "maxLength": 40 },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "category", "difficulty", "questionText", "options", "answerHash", "sourceUrl", "publishedAt", "verifiedAt", "isActive", "createdAt", "updatedAt"]
+    },
+    "QuestionKey": {
+      "title": "QuestionKey",
+      "description": "Protected answer key and explanation for a question.",
+      "type": "object",
+      "properties": {
+        "questionId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "correctOption": { "type": "number" },
+        "explanation": { "type": "string", "maxLength": 1000 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["questionId", "correctOption", "explanation", "updatedAt"]
+    },
+    "QuestionHistory": {
+      "title": "QuestionHistory",
+      "description": "Tracks questions recently shown to a player so future races prioritize unseen questions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "playerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "questionId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "category": { "type": "string", "enum": ["math", "gk", "science", "current_affairs"] },
+        "difficulty": { "type": "string", "enum": ["easy", "medium", "hard"] },
+        "lastShownAtMs": { "type": "number" },
+        "timesShown": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "playerId", "questionId", "category", "difficulty", "lastShownAtMs", "timesShown", "updatedAt"]
+    },
+    "Room": {
+      "title": "Room",
+      "description": "Multiplayer room state synchronized in real time.",
+      "type": "object",
+      "properties": {
+        "roomCode": { "type": "string", "minLength": 6, "maxLength": 6, "pattern": "^[A-Z0-9]{6}$" },
+        "hostId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "hostNickname": { "type": "string", "minLength": 2, "maxLength": 20 },
+        "maxPlayers": { "type": "number", "enum": [2, 4] },
+        "category": { "type": "string", "enum": ["math", "gk", "science", "current_affairs"] },
+        "difficulty": { "type": "string", "enum": ["easy", "medium", "hard"] },
+        "subcategories": { "type": "array" },
+        "questionCount": { "type": "number", "enum": [10, 15, 20] },
+        "questionTimeLimitSec": { "type": "number" },
+        "status": { "type": "string", "enum": ["waiting", "countdown", "racing", "finished", "abandoned"] },
+        "questionIds": { "type": "array" },
+        "playerCount": { "type": "number" },
+        "countdownStartedAtMs": { "type": "number" },
+        "raceStartedAtMs": { "type": "number" },
+        "raceFinishedAtMs": { "type": "number" },
+        "winnerId": { "type": "string", "maxLength": 128 },
+        "winnerNickname": { "type": "string", "maxLength": 30 },
+        "isPublic": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomCode", "hostId", "hostNickname", "maxPlayers", "category", "difficulty", "questionTimeLimitSec", "status", "questionIds", "playerCount", "countdownStartedAtMs", "raceStartedAtMs", "raceFinishedAtMs", "winnerId", "winnerNickname", "isPublic", "createdAt", "updatedAt"]
+    },
+    "RoomPlayer": {
+      "title": "RoomPlayer",
+      "description": "Player state inside a specific multiplayer room.",
+      "type": "object",
+      "properties": {
+        "roomCode": { "type": "string", "minLength": 6, "maxLength": 6, "pattern": "^[A-Z0-9]{6}$" },
+        "playerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "nickname": { "type": "string", "minLength": 2, "maxLength": 20 },
+        "carColor": { "type": "string", "enum": ["blue", "red", "green", "purple"] },
+        "ready": { "type": "boolean" },
+        "distance": { "type": "number" },
+        "score": { "type": "number" },
+        "correctAnswers": { "type": "number" },
+        "wrongAnswers": { "type": "number" },
+        "currentQuestionIndex": { "type": "number" },
+        "finished": { "type": "boolean" },
+        "finishTimeMs": { "type": "number" },
+        "placement": { "type": "number" },
+        "connected": { "type": "boolean" },
+        "lastSeenAtMs": { "type": "number" },
+        "joinedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomCode", "playerId", "nickname", "carColor", "ready", "distance", "correctAnswers", "wrongAnswers", "currentQuestionIndex", "finished", "finishTimeMs", "placement", "connected", "lastSeenAtMs", "joinedAt", "updatedAt"]
+    },
+    "AnswerSubmission": {
+      "title": "AnswerSubmission",
+      "description": "Immutable record of a single question answer submitted by a player in a room.",
+      "type": "object",
+      "properties": {
+        "roomCode": { "type": "string", "minLength": 6, "maxLength": 6, "pattern": "^[A-Z0-9]{6}$" },
+        "playerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "questionId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "questionIndex": { "type": "number" },
+        "selectedOption": { "type": "number" },
+        "isCorrect": { "type": "boolean" },
+        "distanceDelta": { "type": "number" },
+        "timeTakenMs": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomCode", "playerId", "questionId", "questionIndex", "selectedOption", "isCorrect", "distanceDelta", "timeTakenMs", "createdAt"]
+    },
+    "RaceResult": {
+      "title": "RaceResult",
+      "description": "Completed race result record for leaderboards and player history.",
+      "type": "object",
+      "properties": {
+        "roomCode": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "playerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "nickname": { "type": "string", "minLength": 2, "maxLength": 20 },
+        "carColor": { "type": "string", "enum": ["blue", "red", "green", "purple"] },
+        "mode": { "type": "string", "enum": ["solo", "2p", "4p", "timed"] },
+        "category": { "type": "string", "enum": ["math", "gk", "science", "current_affairs"] },
+        "difficulty": { "type": "string", "enum": ["easy", "medium", "hard"] },
+        "placement": { "type": "number" },
+        "score": { "type": "number" },
+        "correctAnswers": { "type": "number" },
+        "wrongAnswers": { "type": "number" },
+        "accuracy": { "type": "number" },
+        "distance": { "type": "number" },
+        "durationMs": { "type": "number" },
+        "isPublic": { "type": "boolean" },
+        "completedAtMs": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomCode", "playerId", "nickname", "carColor", "mode", "category", "difficulty", "placement", "correctAnswers", "wrongAnswers", "accuracy", "distance", "durationMs", "isPublic", "completedAtMs", "createdAt"]
+    },
+    "QuestionReport": {
+      "title": "QuestionReport",
+      "description": "Player-submitted report for a question or answer issue.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "questionId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "questionText": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "reporterId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "reporterNickname": { "type": "string", "minLength": 2, "maxLength": 20 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "status": { "type": "string", "enum": ["open", "resolved", "dismissed"] },
+        "adminNote": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "questionId", "questionText", "reporterId", "reporterNickname", "reason", "status", "adminNote", "createdAt", "updatedAt"]
+    },
+    "AdminAuditLog": {
+      "title": "AdminAuditLog",
+      "description": "Immutable audit log entry for administrative actions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "adminId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "adminEmail": { "type": "string", "maxLength": 254 },
+        "action": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "targetType": { "type": "string", "enum": ["question", "player", "room", "leaderboard", "report", "system"] },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "details": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "adminId", "adminEmail", "action", "targetType", "targetId", "details", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/profiles/{userId}": {
+      "schema": { "$ref": "#/entities/Profile" },
+      "description": "Public player profile and racing statistics."
+    },
+    "/users_private/{userId}": {
+      "schema": { "$ref": "#/entities/UserPrivate" },
+      "description": "Private PII collection storing user email."
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Administrator privilege records."
+    },
+    "/system_config/{configId}": {
+      "schema": { "$ref": "#/entities/AdminBootstrapLock" },
+      "description": "One-time owner administrator bootstrap lock."
+    },
+    "/questions/{questionId}": {
+      "schema": { "$ref": "#/entities/Question" },
+      "description": "Question bank records without plaintext answer keys."
+    },
+    "/question_keys/{questionId}": {
+      "schema": { "$ref": "#/entities/QuestionKey" },
+      "description": "Protected question answer keys and explanations."
+    },
+    "/question_history/{historyId}": {
+      "schema": { "$ref": "#/entities/QuestionHistory" },
+      "description": "Per-player question history for prioritizing unseen questions across sessions."
+    },
+    "/rooms/{roomCode}": {
+      "schema": { "$ref": "#/entities/Room" },
+      "description": "Multiplayer room records indexed by 6-character code."
+    },
+    "/rooms/{roomCode}/players/{playerId}": {
+      "schema": { "$ref": "#/entities/RoomPlayer" },
+      "description": "Synchronized player state inside a multiplayer room."
+    },
+    "/rooms/{roomCode}/submissions/{submissionId}": {
+      "schema": { "$ref": "#/entities/AnswerSubmission" },
+      "description": "Per-question answer submissions inside a room."
+    },
+    "/race_results/{resultId}": {
+      "schema": { "$ref": "#/entities/RaceResult" },
+      "description": "Completed race result records."
+    },
+    "/question_reports/{reportId}": {
+      "schema": { "$ref": "#/entities/QuestionReport" },
+      "description": "Player-submitted question reports."
+    },
+    "/admin_audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AdminAuditLog" },
+      "description": "Immutable administrator audit log records."
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Calculation Racer",
+  "description": "Multiplayer brain-powered arcade racing game where mathematics, science, general knowledge, and verified current affairs questions propel your car to the finish line.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

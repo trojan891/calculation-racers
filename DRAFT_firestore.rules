@@ -1,0 +1,554 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 0: Global Default-Deny Catch-All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function isValidSeedId(id) {
+      return id is string && id.size() >= 6 && id.size() <= 128 && id.matches('^seed_[a-zA-Z0-9_\\-]+$');
+    }
+    function isValidRoomCode(code) {
+      return code is string && code.size() == 6 && code.matches('^[A-Z0-9]{6}$');
+    }
+    function incoming() {
+      return request.resource.data;
+    }
+    function existing() {
+      return resource.data;
+    }
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'rizveemanger@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // 1. Validation Blueprint: Profile
+    function isValidProfile(data) {
+      return data.keys().hasAll([
+        'uid', 'nickname', 'carColor', 'wins', 'totalRaces', 'bestTimeMs',
+        'totalCorrect', 'totalWrong', 'isPublicProfile', 'isBanned', 'banReason',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'uid', 'nickname', 'carColor', 'wins', 'totalRaces', 'bestTimeMs', 'bestScore',
+        'totalCorrect', 'totalWrong', 'isPublicProfile', 'isBanned', 'banReason',
+        'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.uid) &&
+      data.nickname is string && data.nickname.size() >= 2 && data.nickname.size() <= 20 &&
+      data.carColor is string && data.carColor in ['blue', 'red', 'green', 'purple'] &&
+      data.wins is int && data.wins >= 0 && data.wins <= 1000000 &&
+      data.totalRaces is int && data.totalRaces >= 0 && data.totalRaces <= 1000000 &&
+      data.bestTimeMs is int && data.bestTimeMs >= 0 && data.bestTimeMs <= 36000000 &&
+      (!('bestScore' in data) || (data.bestScore is int && data.bestScore >= 0 && data.bestScore <= 10000)) &&
+      data.totalCorrect is int && data.totalCorrect >= 0 && data.totalCorrect <= 20000000 &&
+      data.totalWrong is int && data.totalWrong >= 0 && data.totalWrong <= 20000000 &&
+      data.isPublicProfile is bool &&
+      data.isBanned is bool &&
+      data.banReason is string && data.banReason.size() <= 200 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    match /profiles/{userId} {
+      allow get: if isValidId(userId) && (existing().isPublicProfile == true || isOwner(userId) || isAdmin());
+      allow list: if existing().isPublicProfile == true || (isSignedIn() && existing().uid == request.auth.uid) || isAdmin();
+      allow create: if isVerifiedUser() && isValidId(userId) && isOwner(userId) &&
+        isValidProfile(incoming()) &&
+        incoming().uid == request.auth.uid &&
+        incoming().isBanned == false &&
+        incoming().banReason == '' &&
+        incoming().wins == 0 &&
+        incoming().totalRaces == 0 &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(userId) && isValidProfile(incoming()) && (
+        isAdmin() || (
+          isOwner(userId) &&
+          incoming().uid == existing().uid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          existing().isBanned == false &&
+          incoming().isBanned == existing().isBanned &&
+          incoming().banReason == existing().banReason &&
+          (
+            // Action 1: Update profile preferences (nickname, carColor, visibility)
+            incoming().diff(existing()).affectedKeys().hasOnly(['nickname', 'carColor', 'isPublicProfile', 'updatedAt']) ||
+            // Action 2: Increment race statistics after completing a race
+            (
+              incoming().diff(existing()).affectedKeys().hasOnly(['wins', 'totalRaces', 'bestTimeMs', 'bestScore', 'totalCorrect', 'totalWrong', 'updatedAt']) &&
+              incoming().totalRaces == existing().totalRaces + 1 &&
+              (incoming().wins == existing().wins || incoming().wins == existing().wins + 1) &&
+              incoming().totalCorrect >= existing().totalCorrect &&
+              incoming().totalCorrect <= existing().totalCorrect + 20 &&
+              incoming().totalWrong >= existing().totalWrong &&
+              incoming().totalWrong <= existing().totalWrong + 20
+            )
+          )
+        )
+      );
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    // 2. Validation Blueprint: UserPrivate (PII Isolation)
+    function isValidUserPrivate(data) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'createdAt', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 254 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    match /users_private/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin() && existing().uid is string;
+      allow create: if isVerifiedUser() && isValidId(userId) && isOwner(userId) &&
+        isValidUserPrivate(incoming()) &&
+        incoming().uid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(userId) && isValidUserPrivate(incoming()) && (
+        isAdmin() || (
+          isOwner(userId) &&
+          incoming().uid == existing().uid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    // 3. Validation Blueprint: AdminRecord
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['uid', 'email', 'role', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'role', 'createdAt']) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 254 &&
+        data.role is string && data.role == 'admin' &&
+        data.createdAt is timestamp;
+    }
+
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isOwner(adminId) || isAdmin());
+      allow list: if isAdmin() && existing().role == 'admin';
+      allow create: if isAdmin() && isValidId(adminId) && isValidAdminRecord(incoming()) &&
+        incoming().uid == adminId &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(adminId) && isAdmin();
+    }
+
+    // 4. Validation Blueprint: Question
+    function isValidQuestion(data) {
+      return data.keys().hasAll([
+        'id', 'category', 'difficulty', 'questionText', 'options',
+        'answerHash', 'sourceUrl', 'publishedAt', 'verifiedAt',
+        'isActive', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'category', 'subcategory', 'difficulty', 'questionText', 'options',
+        'answerHash', 'sourceUrl', 'publishedAt', 'verifiedAt', 'expiresAt',
+        'isActive', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      data.category is string && data.category in ['math', 'gk', 'science', 'current_affairs'] &&
+      (!('subcategory' in data) || (data.subcategory is string && data.subcategory.size() <= 60)) &&
+      data.difficulty is string && data.difficulty in ['easy', 'medium', 'hard'] &&
+      data.questionText is string && data.questionText.size() >= 1 && data.questionText.size() <= 500 &&
+      data.options is list && data.options.size() == 4 &&
+      data.options[0] is string && data.options[0].size() >= 1 && data.options[0].size() <= 200 &&
+      data.options[1] is string && data.options[1].size() >= 1 && data.options[1].size() <= 200 &&
+      data.options[2] is string && data.options[2].size() >= 1 && data.options[2].size() <= 200 &&
+      data.options[3] is string && data.options[3].size() >= 1 && data.options[3].size() <= 200 &&
+      data.answerHash is string && data.answerHash.size() >= 1 && data.answerHash.size() <= 128 &&
+      data.sourceUrl is string && data.sourceUrl.size() <= 500 &&
+      data.publishedAt is string && data.publishedAt.size() <= 40 &&
+      data.verifiedAt is string && data.verifiedAt.size() <= 40 &&
+      (!('expiresAt' in data) || (data.expiresAt is string && data.expiresAt.size() <= 40)) &&
+      data.isActive is bool &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    match /questions/{questionId} {
+      allow get: if isValidId(questionId) && (existing().isActive == true || isAdmin());
+      allow list: if existing().isActive == true || isAdmin();
+      allow create: if (isAdmin() || (isVerifiedUser() && isValidSeedId(questionId))) &&
+        isValidId(questionId) && isValidQuestion(incoming()) &&
+        incoming().id == questionId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isAdmin() && isValidId(questionId) && isValidQuestion(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'category', 'subcategory', 'difficulty', 'questionText', 'options',
+          'answerHash', 'sourceUrl', 'publishedAt', 'verifiedAt', 'expiresAt',
+          'isActive', 'updatedAt'
+        ]);
+      allow delete: if isAdmin() && isValidId(questionId);
+    }
+
+    // 5. Validation Blueprint: QuestionKey
+    function isValidQuestionKey(data) {
+      return data.keys().hasAll(['questionId', 'correctOption', 'explanation', 'updatedAt']) &&
+        data.keys().hasOnly(['questionId', 'correctOption', 'explanation', 'updatedAt']) &&
+        isValidId(data.questionId) &&
+        data.correctOption is int && data.correctOption >= 0 && data.correctOption <= 3 &&
+        data.explanation is string && data.explanation.size() <= 1000 &&
+        data.updatedAt is timestamp;
+    }
+
+    match /question_keys/{questionId} {
+      allow get: if isValidId(questionId) && (isSignedIn() || isAdmin());
+      allow list: if isAdmin() && existing().correctOption >= 0;
+      allow create: if (isAdmin() || (isVerifiedUser() && isValidSeedId(questionId))) &&
+        isValidId(questionId) && isValidQuestionKey(incoming()) &&
+        incoming().questionId == questionId &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/questions/$(questionId));
+      allow update: if isAdmin() && isValidId(questionId) && isValidQuestionKey(incoming()) &&
+        incoming().questionId == existing().questionId &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['correctOption', 'explanation', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(questionId);
+    }
+
+    // 6. Validation Blueprint: Room
+    function isValidRoom(data) {
+      return data.keys().hasAll([
+        'roomCode', 'hostId', 'hostNickname', 'maxPlayers', 'category', 'difficulty',
+        'questionTimeLimitSec', 'status', 'questionIds', 'playerCount',
+        'countdownStartedAtMs', 'raceStartedAtMs', 'raceFinishedAtMs',
+        'winnerId', 'winnerNickname', 'isPublic', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'roomCode', 'hostId', 'hostNickname', 'maxPlayers', 'category', 'difficulty',
+        'subcategories', 'questionCount', 'questionTimeLimitSec', 'status', 'questionIds', 'playerCount',
+        'countdownStartedAtMs', 'raceStartedAtMs', 'raceFinishedAtMs',
+        'winnerId', 'winnerNickname', 'isPublic', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidRoomCode(data.roomCode) &&
+      isValidId(data.hostId) &&
+      data.hostNickname is string && data.hostNickname.size() >= 2 && data.hostNickname.size() <= 20 &&
+      data.maxPlayers is int && data.maxPlayers in [2, 4] &&
+      data.category is string && data.category in ['math', 'gk', 'science', 'current_affairs'] &&
+      data.difficulty is string && data.difficulty in ['easy', 'medium', 'hard'] &&
+      (!('subcategories' in data) || (data.subcategories is list && data.subcategories.size() <= 10)) &&
+      (!('questionCount' in data) || (data.questionCount is int && data.questionCount in [10, 15, 20])) &&
+      data.questionTimeLimitSec is int && data.questionTimeLimitSec >= 5 && data.questionTimeLimitSec <= 60 &&
+      data.status is string && data.status in ['waiting', 'countdown', 'racing', 'finished', 'abandoned'] &&
+      data.questionIds is list && data.questionIds.size() >= 1 && data.questionIds.size() <= 20 &&
+      data.questionIds[0] is string && data.questionIds[0].size() <= 128 &&
+      data.playerCount is int && data.playerCount >= 1 && data.playerCount <= 4 &&
+      data.countdownStartedAtMs is int && data.countdownStartedAtMs >= 0 &&
+      data.raceStartedAtMs is int && data.raceStartedAtMs >= 0 &&
+      data.raceFinishedAtMs is int && data.raceFinishedAtMs >= 0 &&
+      data.winnerId is string && data.winnerId.size() <= 128 &&
+      data.winnerNickname is string && data.winnerNickname.size() <= 30 &&
+      data.isPublic is bool &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    match /rooms/{roomCode} {
+      allow get: if isValidRoomCode(roomCode) && isSignedIn();
+      allow list: if isSignedIn() && (existing().isPublic == true || existing().hostId == request.auth.uid || isAdmin());
+      allow create: if isVerifiedUser() && isValidRoomCode(roomCode) && isValidRoom(incoming()) &&
+        incoming().roomCode == roomCode &&
+        incoming().hostId == request.auth.uid &&
+        incoming().status == 'waiting' &&
+        incoming().playerCount == 1 &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/profiles/$(request.auth.uid));
+      allow update: if isVerifiedUser() && isValidRoomCode(roomCode) && isValidRoom(incoming()) && (
+        isAdmin() || (
+          existing().status in ['waiting', 'countdown', 'racing'] &&
+          incoming().roomCode == existing().roomCode &&
+          incoming().hostId == existing().hostId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          (
+            // Action 1: Player joins/leaves room while waiting
+            (
+              existing().status == 'waiting' &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['playerCount', 'updatedAt']) &&
+              incoming().playerCount <= existing().maxPlayers
+            ) ||
+            // Action 2: Host transitions waiting -> countdown -> racing
+            (
+              existing().hostId == request.auth.uid &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'countdownStartedAtMs', 'raceStartedAtMs', 'questionIds', 'updatedAt'])
+            ) ||
+            // Action 3: Room finishes when a player crosses the finish line or race completes
+            (
+              exists(/databases/$(database)/documents/rooms/$(roomCode)/players/$(request.auth.uid)) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'raceFinishedAtMs', 'winnerId', 'winnerNickname', 'updatedAt']) &&
+              incoming().status in ['finished', 'abandoned']
+            )
+          )
+        )
+      );
+      allow delete: if isValidRoomCode(roomCode) && isAdmin();
+
+      // 7. Subcollection: Room Players
+      function isValidRoomPlayer(data) {
+        return data.keys().hasAll([
+          'roomCode', 'playerId', 'nickname', 'carColor', 'ready',
+          'distance', 'correctAnswers', 'wrongAnswers', 'currentQuestionIndex',
+          'finished', 'finishTimeMs', 'placement', 'connected', 'lastSeenAtMs',
+          'joinedAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'roomCode', 'playerId', 'nickname', 'carColor', 'ready',
+          'distance', 'score', 'correctAnswers', 'wrongAnswers', 'currentQuestionIndex',
+          'finished', 'finishTimeMs', 'placement', 'connected', 'lastSeenAtMs',
+          'joinedAt', 'updatedAt'
+        ]) &&
+        isValidRoomCode(data.roomCode) &&
+        isValidId(data.playerId) &&
+        data.nickname is string && data.nickname.size() >= 2 && data.nickname.size() <= 20 &&
+        data.carColor is string && data.carColor in ['blue', 'red', 'green', 'purple'] &&
+        data.ready is bool &&
+        data.distance is int && data.distance >= 0 && data.distance <= 100 &&
+        (!('score' in data) || (data.score is int && data.score >= 0 && data.score <= 200)) &&
+        data.correctAnswers is int && data.correctAnswers >= 0 && data.correctAnswers <= 20 &&
+        data.wrongAnswers is int && data.wrongAnswers >= 0 && data.wrongAnswers <= 20 &&
+        data.currentQuestionIndex is int && data.currentQuestionIndex >= 0 && data.currentQuestionIndex <= 20 &&
+        data.finished is bool &&
+        data.finishTimeMs is int && data.finishTimeMs >= 0 && data.finishTimeMs <= 36000000 &&
+        data.placement is int && data.placement >= 0 && data.placement <= 4 &&
+        data.connected is bool &&
+        data.lastSeenAtMs is int && data.lastSeenAtMs >= 0 &&
+        data.joinedAt is timestamp &&
+        data.updatedAt is timestamp;
+      }
+
+      match /players/{playerId} {
+        allow get: if isValidRoomCode(roomCode) && isValidId(playerId) && isSignedIn() &&
+          exists(/databases/$(database)/documents/rooms/$(roomCode));
+        allow list: if isSignedIn() && existing().roomCode == roomCode;
+        allow create: if isVerifiedUser() && isValidRoomCode(roomCode) && isValidId(playerId) &&
+          isOwner(playerId) &&
+          isValidRoomPlayer(incoming()) &&
+          incoming().roomCode == roomCode &&
+          incoming().playerId == request.auth.uid &&
+          incoming().distance == 0 &&
+          incoming().correctAnswers == 0 &&
+          incoming().wrongAnswers == 0 &&
+          incoming().currentQuestionIndex == 0 &&
+          incoming().finished == false &&
+          incoming().joinedAt == request.time &&
+          incoming().updatedAt == request.time &&
+          exists(/databases/$(database)/documents/rooms/$(roomCode)) &&
+          get(/databases/$(database)/documents/rooms/$(roomCode)).data.status == 'waiting';
+        allow update: if isVerifiedUser() && isValidRoomCode(roomCode) && isValidId(playerId) &&
+          isValidRoomPlayer(incoming()) && (
+            isAdmin() || (
+              isOwner(playerId) &&
+              incoming().roomCode == existing().roomCode &&
+              incoming().playerId == existing().playerId &&
+              incoming().joinedAt == existing().joinedAt &&
+              incoming().updatedAt == request.time &&
+              exists(/databases/$(database)/documents/rooms/$(roomCode)) &&
+              (
+                // Action 1: Toggle ready status / carColor / heartbeat in lobby
+                (
+                  incoming().diff(existing()).affectedKeys().hasOnly(['ready', 'carColor', 'connected', 'lastSeenAtMs', 'updatedAt'])
+                ) ||
+                // Action 2: Advance question progress and car position during active race
+                (
+                  existing().finished == false &&
+                  incoming().diff(existing()).affectedKeys().hasOnly([
+                    'distance', 'score', 'correctAnswers', 'wrongAnswers', 'currentQuestionIndex',
+                    'finished', 'finishTimeMs', 'placement', 'connected', 'lastSeenAtMs', 'updatedAt'
+                  ]) &&
+                  incoming().currentQuestionIndex == existing().currentQuestionIndex + 1 &&
+                  incoming().distance >= 0 &&
+                  incoming().distance <= 100
+                ) ||
+                // Action 3: Assign final placement
+                (
+                  incoming().diff(existing()).affectedKeys().hasOnly(['placement', 'finished', 'finishTimeMs', 'updatedAt'])
+                )
+              )
+            )
+          );
+        allow delete: if isValidRoomCode(roomCode) && isValidId(playerId) && (isOwner(playerId) || isAdmin());
+      }
+
+      // 8. Subcollection: Answer Submissions
+      function isValidSubmission(data) {
+        return data.keys().hasAll([
+          'roomCode', 'playerId', 'questionId', 'questionIndex',
+          'selectedOption', 'isCorrect', 'distanceDelta', 'timeTakenMs', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'roomCode', 'playerId', 'questionId', 'questionIndex',
+          'selectedOption', 'isCorrect', 'distanceDelta', 'timeTakenMs', 'createdAt'
+        ]) &&
+        isValidRoomCode(data.roomCode) &&
+        isValidId(data.playerId) &&
+        isValidId(data.questionId) &&
+        data.questionIndex is int && data.questionIndex >= 0 && data.questionIndex < 20 &&
+        data.selectedOption is int && data.selectedOption >= -1 && data.selectedOption <= 3 &&
+        data.isCorrect is bool &&
+        data.distanceDelta is int && data.distanceDelta >= -10 && data.distanceDelta <= 15 &&
+        data.timeTakenMs is int && data.timeTakenMs >= 0 && data.timeTakenMs <= 120000 &&
+        data.createdAt is timestamp;
+      }
+
+      match /submissions/{submissionId} {
+        allow get: if isValidRoomCode(roomCode) && isValidId(submissionId) && isSignedIn() &&
+          exists(/databases/$(database)/documents/rooms/$(roomCode));
+        allow list: if isSignedIn() && existing().roomCode == roomCode;
+        allow create: if isVerifiedUser() && isValidRoomCode(roomCode) && isValidId(submissionId) &&
+          isValidSubmission(incoming()) &&
+          incoming().roomCode == roomCode &&
+          incoming().playerId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          exists(/databases/$(database)/documents/rooms/$(roomCode)/players/$(request.auth.uid));
+        allow update: if false;
+        allow delete: if isValidRoomCode(roomCode) && isValidId(submissionId) && isAdmin();
+      }
+    }
+
+    // 9. Validation Blueprint: RaceResult
+    function isValidRaceResult(data) {
+      return data.keys().hasAll([
+        'roomCode', 'playerId', 'nickname', 'carColor', 'mode',
+        'category', 'difficulty', 'placement', 'correctAnswers',
+        'wrongAnswers', 'accuracy', 'distance', 'durationMs',
+        'isPublic', 'completedAtMs', 'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'roomCode', 'playerId', 'nickname', 'carColor', 'mode',
+        'category', 'difficulty', 'placement', 'score', 'correctAnswers',
+        'wrongAnswers', 'accuracy', 'distance', 'durationMs',
+        'isPublic', 'completedAtMs', 'createdAt'
+      ]) &&
+      isValidId(data.roomCode) &&
+      isValidId(data.playerId) &&
+      data.nickname is string && data.nickname.size() >= 2 && data.nickname.size() <= 20 &&
+      data.carColor is string && data.carColor in ['blue', 'red', 'green', 'purple'] &&
+      data.mode is string && data.mode in ['solo', '2p', '4p', 'timed'] &&
+      data.category is string && data.category in ['math', 'gk', 'science', 'current_affairs'] &&
+      data.difficulty is string && data.difficulty in ['easy', 'medium', 'hard'] &&
+      data.placement is int && data.placement >= 1 && data.placement <= 4 &&
+      (!('score' in data) || (data.score is int && data.score >= 0 && data.score <= 200)) &&
+      data.correctAnswers is int && data.correctAnswers >= 0 && data.correctAnswers <= 20 &&
+      data.wrongAnswers is int && data.wrongAnswers >= 0 && data.wrongAnswers <= 20 &&
+      data.accuracy is int && data.accuracy >= 0 && data.accuracy <= 100 &&
+      data.distance is int && data.distance >= 0 && data.distance <= 100 &&
+      data.durationMs is int && data.durationMs >= 0 && data.durationMs <= 36000000 &&
+      data.isPublic is bool &&
+      data.completedAtMs is int && data.completedAtMs >= 0 &&
+      data.createdAt is timestamp;
+    }
+
+    match /race_results/{resultId} {
+      allow get: if isValidId(resultId) && (existing().isPublic == true || isOwner(existing().playerId) || isAdmin());
+      allow list: if existing().isPublic == true || (isSignedIn() && existing().playerId == request.auth.uid) || isAdmin();
+      allow create: if isVerifiedUser() && isValidId(resultId) && isValidRaceResult(incoming()) &&
+        incoming().playerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        exists(/databases/$(database)/documents/profiles/$(request.auth.uid));
+      allow update: if false;
+      allow delete: if isValidId(resultId) && isAdmin();
+    }
+
+    // 10. Validation Blueprint: QuestionReport
+    function isValidQuestionReport(data) {
+      return data.keys().hasAll([
+        'id', 'questionId', 'questionText', 'reporterId', 'reporterNickname',
+        'reason', 'status', 'adminNote', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'questionId', 'questionText', 'reporterId', 'reporterNickname',
+        'reason', 'status', 'adminNote', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.questionId) &&
+      data.questionText is string && data.questionText.size() >= 1 && data.questionText.size() <= 500 &&
+      isValidId(data.reporterId) &&
+      data.reporterNickname is string && data.reporterNickname.size() >= 2 && data.reporterNickname.size() <= 20 &&
+      data.reason is string && data.reason.size() >= 1 && data.reason.size() <= 500 &&
+      data.status is string && data.status in ['open', 'resolved', 'dismissed'] &&
+      data.adminNote is string && data.adminNote.size() <= 500 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    match /question_reports/{reportId} {
+      allow get: if isValidId(reportId) && (isOwner(existing().reporterId) || isAdmin());
+      allow list: if isSignedIn() && (existing().reporterId == request.auth.uid || isAdmin());
+      allow create: if isVerifiedUser() && isValidId(reportId) && isValidQuestionReport(incoming()) &&
+        incoming().id == reportId &&
+        incoming().reporterId == request.auth.uid &&
+        incoming().status == 'open' &&
+        incoming().adminNote == '' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/questions/$(incoming().questionId));
+      allow update: if isAdmin() && isValidId(reportId) && isValidQuestionReport(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().questionId == existing().questionId &&
+        incoming().reporterId == existing().reporterId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminNote', 'updatedAt']);
+      allow delete: if isValidId(reportId) && isAdmin();
+    }
+
+    // 11. Validation Blueprint: AdminAuditLog
+    function isValidAdminAuditLog(data) {
+      return data.keys().hasAll([
+        'id', 'adminId', 'adminEmail', 'action', 'targetType',
+        'targetId', 'details', 'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'adminId', 'adminEmail', 'action', 'targetType',
+        'targetId', 'details', 'createdAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.adminId) &&
+      data.adminEmail is string && data.adminEmail.size() >= 3 && data.adminEmail.size() <= 254 &&
+      data.action is string && data.action.size() >= 1 && data.action.size() <= 100 &&
+      data.targetType is string && data.targetType in ['question', 'player', 'room', 'leaderboard', 'report', 'system'] &&
+      data.targetId is string && data.targetId.size() >= 1 && data.targetId.size() <= 128 &&
+      data.details is string && data.details.size() <= 1000 &&
+      data.createdAt is timestamp;
+    }
+
+    match /admin_audit_logs/{logId} {
+      allow get: if isValidId(logId) && isAdmin();
+      allow list: if isAdmin() && existing().adminId is string;
+      allow create: if isAdmin() && isValidId(logId) && isValidAdminAuditLog(incoming()) &&
+        incoming().id == logId &&
+        incoming().adminId == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if false;
+    }
+  }
+}
