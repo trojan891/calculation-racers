@@ -1,7 +1,8 @@
 export type QuestionCategory = 'math' | 'gk' | 'science' | 'current_affairs';
 export type QuestionDifficulty = 'easy' | 'medium' | 'hard';
 export type CarColor = 'blue' | 'red' | 'green' | 'purple';
-export type GameMode = 'solo' | '2p' | '4p' | 'timed';
+export type RoomCapacityOption = 2 | 3 | 4 | 8;
+export type GameMode = 'solo' | '2p' | '3p' | '4p' | '8p' | 'timed';
 export type RoomStatus = 'waiting' | 'countdown' | 'racing' | 'finished' | 'abandoned';
 export type QuestionCountOption = 5 | 6 | 8 | 10 | 12 | 15 | 20;
 export type QuestionTimeOption = 10 | 15 | 20 | 30;
@@ -175,6 +176,7 @@ export interface PlayerProfile {
   uid: string;
   nickname: string;
   carColor: CarColor;
+  avatarUrl?: string;
   wins: number;
   totalRaces: number;
   bestTimeMs: number;
@@ -242,7 +244,7 @@ export interface RoomRecord {
   roomCode: string;
   hostId: string;
   hostNickname: string;
-  maxPlayers: 2 | 4;
+  maxPlayers: RoomCapacityOption;
   gameId?: TrojoGameId;
   iqFields?: IqRelayField[];
   category: QuestionCategory;

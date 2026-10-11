@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import {
   AlertTriangle,
+  ArrowLeft,
   Award,
   Brain,
   Check,
@@ -111,8 +112,9 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
   onReplayMultiplayer,
   onPlayMoreGames,
   onOpenLeaderboard,
+  onExitToHome,
 }) => {
-  const isMultiplayer = (mode === '2p' || mode === '4p') && Boolean(roomCode);
+  const isMultiplayer = mode !== 'solo' && Boolean(roomCode);
   const [room, setRoom] = useState<RoomRecord | null>(initialRoom || null);
   const [roomPlayers, setRoomPlayers] = useState<RoomPlayerRecord[]>(initialPlayers);
 
@@ -174,6 +176,30 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
   const [scoreCardBlob, setScoreCardBlob] = useState<Blob | null>(null);
   const [generatingCard, setGeneratingCard] = useState(false);
   const [shareToast, setShareToast] = useState<string | null>(null);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
+  const [finishConfirmOpen, setFinishConfirmOpen] = useState(false);
+
+  // Lock page scrolling during active gameplay and warn before accidental refresh/close
+  useEffect(() => {
+    if (!raceFinished) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [raceFinished]);
+
+  useEffect(() => {
+    if (raceFinished) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [raceFinished]);
 
   const currentQuestion = questions[questionIndex] || null;
   const totalQuestions = questions.length;
@@ -264,7 +290,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
             ((p.score || 0) > finalScore ||
               ((p.score || 0) === finalScore && p.distance > finalDistance))
         );
-        placement = Math.min(4, betterPlayers.length + 1);
+        placement = Math.min(8, betterPlayers.length + 1);
       }
 
       if (isGuest) {
@@ -470,7 +496,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
         const finishedPeers = roomPlayers.filter(
           (p) => p.playerId !== profile.uid && p.finished
         ).length;
-        const myPlacement = nowFinished ? Math.min(4, finishedPeers + 1) : 0;
+        const myPlacement = nowFinished ? Math.min(8, finishedPeers + 1) : 0;
 
         await updateDoc(doc(db, 'rooms', roomCode, 'players', profile.uid), {
           distance: nextDistance,
@@ -693,10 +719,20 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
       if (b.distance !== a.distance) return b.distance - a.distance;
       return a.finishTimeMs - b.finishTimeMs;
     });
-    return list.map((item, idx) => ({
-      ...item,
-      placement: idx + 1,
-    }));
+    const ranked: (typeof list[0] & { placement: number })[] = [];
+    list.forEach((item, idx) => {
+      if (idx === 0) {
+        ranked.push({ ...item, placement: 1 });
+        return;
+      }
+      const prev = ranked[idx - 1];
+      const isTied = item.score === prev.score && item.distance === prev.distance;
+      ranked.push({
+        ...item,
+        placement: isTied ? prev.placement : idx + 1,
+      });
+    });
+    return ranked;
   }, [trackRacers, roomPlayers, profile.uid, score, elapsedMs]);
 
   const totalAnswered = correctCount + wrongCount;
@@ -966,10 +1002,29 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
   }, [activeGameId, isMultiplayer, roomPlayers, profile.uid]);
 
   return (
-    <div className="mx-auto max-w-4xl px-2.5 py-2 sm:px-6 sm:py-5">
+    <div
+      className={`mx-auto max-w-4xl px-2.5 py-2 sm:px-6 sm:py-4 ${
+        !raceFinished
+          ? 'flex h-[100dvh] w-full flex-col justify-between overflow-hidden select-none'
+          : ''
+      }`}
+    >
       {/* Top Game HUD */}
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-2xs sm:px-5 sm:py-3">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-2xs sm:px-5 sm:py-3">
         <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-extrabold sm:gap-2 sm:text-xs">
+          {!raceFinished && (
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playClick();
+                setExitConfirmOpen(true);
+              }}
+              className="inline-flex h-7 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 text-[11px] font-bold text-slate-700 hover:bg-slate-100"
+            >
+              <ArrowLeft className="h-3 w-3" />
+              <span>Exit</span>
+            </button>
+          )}
           <span className="rounded-lg bg-sky-100 px-2 py-0.5 text-sky-900 sm:px-2.5 sm:py-1">
             {gameInfo.emoji} {gameInfo.name}
           </span>
@@ -984,7 +1039,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
           </span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 font-mono text-[11px] tabular-nums sm:gap-4 sm:text-xs">
+        <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] tabular-nums sm:gap-3.5 sm:text-xs">
           <div>
             <span className="text-slate-500">Score: </span>
             <span className="font-extrabold text-purple-700">{score} pts</span>
@@ -1003,6 +1058,18 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
             <Clock className="h-3.5 w-3.5 text-sky-600" />
             <span>{formatDuration(elapsedMs)}</span>
           </div>
+          {!raceFinished && (
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playClick();
+                setFinishConfirmOpen(true);
+              }}
+              className="h-7 rounded-lg bg-[#2563EB] px-2.5 font-sans text-[11px] font-extrabold text-white hover:bg-blue-700"
+            >
+              Finish Game
+            </button>
+          )}
         </div>
       </div>
 
@@ -1468,67 +1535,72 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
             </div>
           )}
 
-          {/* Multiplayer Standings Table */}
+          {/* Multiplayer Standings Leaderboard-Style Results (1st, 2nd, 3rd Highlighted) */}
           {standings.length > 1 && (
-            <div className="mt-6">
-              <h3 className="text-sm font-extrabold text-slate-800">
-                Room Standings
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <h3 className="text-xs font-extrabold tracking-wider text-slate-500 uppercase">
+                Final Standings · Room {roomCode}
               </h3>
-              <div className="mt-2.5 overflow-x-auto rounded-2xl border border-slate-200">
-                <table className="w-full text-left text-sm">
-                  <thead className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
-                    <tr>
-                      <th className="px-4 py-3">Rank</th>
-                      <th className="px-4 py-3">Player</th>
-                      <th className="px-4 py-3">Score</th>
-                      <th className="px-4 py-3">Correct</th>
-                      <th className="px-4 py-3 text-right">Time</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 font-mono text-xs tabular-nums">
-                    {standings.map((racer) => {
-                      const carInfo =
-                        CAR_PALETTE[racer.carColor] || CAR_PALETTE.blue;
-                      return (
-                        <tr
-                          key={racer.playerId}
-                          className={
-                            racer.playerId === profile.uid
-                              ? 'bg-sky-50/80'
-                              : 'hover:bg-slate-50'
-                          }
+              <div className="mt-3 space-y-2">
+                {standings.map((racer) => {
+                  const carInfo =
+                    CAR_PALETTE[racer.carColor] || CAR_PALETTE.blue;
+                  const isMe = racer.playerId === profile.uid;
+                  const rankBadge =
+                    racer.placement === 1
+                      ? 'bg-amber-400 text-slate-950'
+                      : racer.placement === 2
+                        ? 'bg-slate-300 text-slate-900'
+                        : racer.placement === 3
+                          ? 'bg-orange-300 text-orange-950'
+                          : 'bg-slate-100 text-slate-700';
+
+                  return (
+                    <div
+                      key={racer.playerId}
+                      className={`flex items-center justify-between rounded-xl border px-4 py-2.5 shadow-2xs ${
+                        racer.placement === 1
+                          ? 'border-amber-300 bg-amber-50/70'
+                          : isMe
+                            ? 'border-sky-300 bg-sky-50/60'
+                            : 'border-slate-200 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span
+                          className={`inline-flex h-7 min-w-[36px] shrink-0 items-center justify-center rounded-lg px-2 font-mono text-xs font-black ${rankBadge}`}
                         >
-                          <td className="px-4 py-3 font-bold text-slate-900">
-                            <span className="inline-flex items-center gap-1.5">
-                              {racer.placement === 1 && (
-                                <Award className="h-4 w-4 text-amber-500" />
-                              )}
-                              #{racer.placement}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 font-sans font-bold text-slate-900">
-                            <span className="inline-flex items-center gap-2">
-                              <span
-                                className="h-3 w-3 rounded-full"
-                                style={{ backgroundColor: carInfo.primary }}
-                              />
-                              <span>{racer.nickname}</span>
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 font-bold text-purple-700">
-                            {racer.score} pts
-                          </td>
-                          <td className="px-4 py-3 font-bold text-emerald-600">
-                            {racer.correctAnswers}
-                          </td>
-                          <td className="px-4 py-3 text-right font-bold text-slate-700">
-                            {formatDuration(racer.finishTimeMs || elapsedMs)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                          {racer.placement === 1
+                            ? '1st'
+                            : racer.placement === 2
+                              ? '2nd'
+                              : racer.placement === 3
+                                ? '3rd'
+                                : `#${racer.placement}`}
+                        </span>
+                        <span
+                          className="h-3 w-3 shrink-0 rounded-full"
+                          style={{ backgroundColor: carInfo.primary }}
+                        />
+                        <span className="truncate text-sm font-extrabold text-slate-900">
+                          {racer.nickname} {isMe ? '(You)' : ''}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-3 font-mono text-xs font-black tabular-nums">
+                        <span className="text-[#7C3AED]">
+                          {racer.score} pts
+                        </span>
+                        <span className="hidden text-emerald-600 sm:inline">
+                          {racer.correctAnswers}✓
+                        </span>
+                        <span className="text-slate-600">
+                          {formatDuration(racer.finishTimeMs || elapsedMs)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1539,10 +1611,10 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
             </div>
           )}
 
-          {/* BOTTOM ACTION BAR — THREE SOLID-FILLED BUTTONS IN EXACT ORDER:
+          {/* BOTTOM ACTION BAR — THREE SOLID-FILLED BUTTONS:
               1. Share Score — purple
-              2. Replay — green
-              3. Play More Games — blue */}
+              2. Replay / Replay With Same Players — green
+              3. More Games — blue */}
           <div className="mt-7 grid grid-cols-1 gap-3.5 sm:grid-cols-3">
             <button
               type="button"
@@ -1578,7 +1650,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
               className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-sky-600 px-5 py-3.5 font-display text-sm font-extrabold text-white shadow-sm transition-colors hover:bg-sky-500"
             >
               <Gamepad2 className="h-4 w-4" />
-              <span>Play More Games</span>
+              <span>More Games</span>
             </button>
           </div>
 
@@ -1740,6 +1812,85 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
                 </div>
               )}
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Exit Active Game Confirmation Modal */}
+      {exitConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-2xl">
+            <h3 className="font-display text-lg font-black text-slate-900">
+              Leave Active Game?
+            </h3>
+            <p className="mt-1.5 text-xs font-semibold text-slate-500">
+              Your current race progress will not be saved if you exit now.
+            </p>
+            <div className="mt-5 grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playClick();
+                  setExitConfirmOpen(false);
+                }}
+                className="min-h-[44px] rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-extrabold text-slate-700 hover:bg-slate-100"
+              >
+                Keep Playing
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playClick();
+                  setExitConfirmOpen(false);
+                  onExitToHome();
+                }}
+                className="min-h-[44px] rounded-2xl bg-rose-600 px-4 py-2.5 text-xs font-extrabold text-white hover:bg-rose-700"
+              >
+                Exit Game
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Finish Game Confirmation Modal */}
+      {finishConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-2xl">
+            <h3 className="font-display text-lg font-black text-slate-900">
+              Finish Game Now?
+            </h3>
+            <p className="mt-1.5 text-xs font-semibold text-slate-500">
+              End this race now and record your current score ({score} pts)?
+            </p>
+            <div className="mt-5 grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playClick();
+                  setFinishConfirmOpen(false);
+                }}
+                className="min-h-[44px] rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-extrabold text-slate-700 hover:bg-slate-100"
+              >
+                Keep Playing
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFinishConfirmOpen(false);
+                  finishRaceSession(
+                    distance,
+                    score,
+                    correctCount,
+                    wrongCount,
+                    Date.now() - raceStartedAtMs
+                  );
+                }}
+                className="min-h-[44px] rounded-2xl bg-[#2563EB] px-4 py-2.5 text-xs font-extrabold text-white hover:bg-blue-700"
+              >
+                Finish &amp; Save
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -30,6 +30,7 @@ import {
   QuestionItem,
   QuestionTimeOption,
   RaceResultRecord,
+  RoomCapacityOption,
   RoomPlayerRecord,
   RoomRecord,
   SUBCATEGORIES_BY_CATEGORY,
@@ -316,7 +317,10 @@ export function App() {
     setView('arena');
   };
 
-  const handleCreateRoom = async (maxPlayers: 2 | 4, level?: number) => {
+  const modeFromCapacity = (mp: number): GameMode =>
+    mp === 8 ? '8p' : mp === 4 ? '4p' : mp === 3 ? '3p' : '2p';
+
+  const handleCreateRoom = async (maxPlayers: RoomCapacityOption, level?: number) => {
     if (level !== undefined) {
       setSelectedLevel(level);
     }
@@ -331,7 +335,7 @@ export function App() {
       selectedGameId,
       selectedIqFields
     );
-    setActiveMode(maxPlayers === 2 ? '2p' : '4p');
+    setActiveMode(modeFromCapacity(maxPlayers));
     setActiveRoomCode(code);
     setView('lobby');
   };
@@ -345,7 +349,7 @@ export function App() {
         ? room.iqFields
         : IQ_RELAY_ALL_FIELDS.slice(0, 4)
     );
-    setActiveMode(room.maxPlayers === 4 ? '4p' : '2p');
+    setActiveMode(modeFromCapacity(room.maxPlayers));
     setSelectedCategory(room.category);
     setSelectedSubcategories(
       room.subcategories && room.subcategories.length > 0
@@ -386,7 +390,7 @@ export function App() {
     setQuestionTimeLimitSec(
       (room.questionTimeLimitSec as QuestionTimeOption) || 20
     );
-    setActiveMode(room.maxPlayers === 4 ? '4p' : '2p');
+    setActiveMode(modeFromCapacity(room.maxPlayers));
     setActiveRoomRecord(room);
     setActiveRoomPlayers(players);
     setView('arena');
@@ -472,7 +476,8 @@ export function App() {
   return (
     <AppErrorBoundary>
       <div className="flex min-h-screen flex-col bg-[#F8FAFC] text-[#0F172A]">
-        {/* Top Navigation Header */}
+        {/* Top Navigation Header (Hidden during active immersive arena gameplay) */}
+        {view !== 'arena' && (
         <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur-md">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-3 py-2.5 sm:px-6">
             {/* Brand Logo: TROJO — A Fun Nagar */}
@@ -607,12 +612,20 @@ export function App() {
                     : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                 }`}
               >
-                <span
-                  className="flex h-6 w-6 items-center justify-center rounded-lg text-[11px] font-extrabold text-white"
-                  style={{ backgroundColor: carInfo.primary }}
-                >
-                  {getInitials(profile.nickname)}
-                </span>
+                {profile.avatarUrl ? (
+                  <img
+                    src={profile.avatarUrl}
+                    alt={profile.nickname}
+                    className="h-6 w-6 rounded-full object-cover"
+                  />
+                ) : (
+                  <span
+                    className="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-extrabold text-white"
+                    style={{ backgroundColor: carInfo.primary }}
+                  >
+                    {getInitials(profile.nickname)}
+                  </span>
+                )}
                 <span className="hidden max-w-[100px] truncate sm:inline">
                   {profile.nickname}
                 </span>
@@ -724,6 +737,7 @@ export function App() {
             </button>
           </div>
         </header>
+        )}
 
         {/* Auth Error Notice Banner */}
         {authBannerError && (
@@ -934,41 +948,31 @@ export function App() {
           )}
         </main>
 
-        {/* Clean Footer */}
-        <footer className="mt-12 border-t border-slate-200 bg-white py-5 text-center text-xs text-slate-500">
-          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6">
-            <p className="font-bold text-slate-700">
-              TROJO — A Fun Nagar · Calculation Racer, Water Sort, Word Finder, 2048 &amp; Mahjong Solitaire
-            </p>
-            <div className="flex items-center gap-4">
-              <button
-                type="button"
-                onClick={() => {
-                  setSetupViewMode('library');
-                  setSetupPlayerMode('solo');
-                  setView('setup');
-                }}
-                className="font-semibold hover:text-slate-800"
-              >
-                Play Games
-              </button>
-              <button
-                type="button"
-                onClick={() => setView('leaderboard')}
-                className="font-semibold hover:text-slate-800"
-              >
-                Leaderboard
-              </button>
-              <button
-                type="button"
-                onClick={() => setView('profile')}
-                className="font-semibold hover:text-slate-800"
-              >
-                Gaming Profile
-              </button>
+        {/* Minimal Elegant Footer (Hidden during active immersive arena gameplay) */}
+        {view !== 'arena' && (
+          <footer className="mt-auto border-t border-slate-200/80 bg-white py-4 text-center text-xs font-semibold text-slate-600">
+            <div className="mx-auto flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-4">
+              <span>
+                Made with <span className="text-rose-500">♥</span> by{' '}
+                <strong className="font-extrabold text-slate-900">Trojan</strong>
+              </span>
+              <span aria-hidden="true" className="text-slate-300">
+                ·
+              </span>
+              <span>
+                Instagram:{' '}
+                <a
+                  href="https://www.instagram.com/rizvee.uk/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-extrabold text-[#2563EB] hover:underline"
+                >
+                  @rizvee.uk
+                </a>
+              </span>
             </div>
-          </div>
-        </footer>
+          </footer>
+        )}
       </div>
     </AppErrorBoundary>
   );

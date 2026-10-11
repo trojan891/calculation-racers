@@ -714,7 +714,8 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
   onPlayMoreGames,
   onExitToHome,
 }) => {
-  const isMultiplayer = (mode === '2p' || mode === '4p') && Boolean(roomCode);
+  const isMultiplayer =
+    mode !== 'solo' && mode !== 'timed' && Boolean(roomCode);
   const [room, setRoom] = useState<RoomRecord | null>(initialRoom || null);
   const [roomPlayers, setRoomPlayers] = useState<RoomPlayerRecord[]>(initialPlayers);
 
@@ -760,12 +761,36 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
   const [rematchBusy, setRematchBusy] = useState(false);
   const savedResultRef = useRef(false);
 
-  // Share Modal State
+  // Share & Confirmation Modal State
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareImageDataUrl, setShareImageDataUrl] = useState<string | null>(null);
   const [shareGenerating, setShareGenerating] = useState(false);
   const [copiedCaption, setCopiedCaption] = useState(false);
   const [statusToast, setStatusToast] = useState<string | null>(null);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
+  const [finishConfirmOpen, setFinishConfirmOpen] = useState(false);
+
+  // Lock page scrolling during active gameplay and warn before accidental refresh/close
+  useEffect(() => {
+    if (!matchFinished) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [matchFinished]);
+
+  useEffect(() => {
+    if (matchFinished) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [matchFinished]);
 
   const showToast = useCallback((msg: string) => {
     setStatusToast(msg);
@@ -1009,7 +1034,7 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
         const higher = roomPlayers.filter(
           (p) => p.playerId !== profile.uid && (p.score ?? 0) > finalScoreVal
         ).length;
-        placement = Math.min(4, higher + 1);
+        placement = Math.min(8, higher + 1);
       }
 
       if (isGuest) {
@@ -1681,88 +1706,149 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
   // UNIFIED RESULTS SCREEN WHEN MATCH IS FINISHED
   // ============================================================================
   if (matchFinished) {
-    const sortedPlayers = [...roomPlayers].sort(
-      (a, b) => (b.score ?? 0) - (a.score ?? 0)
-    );
+    const rawPlayers =
+      isMultiplayer && roomPlayers.length > 0
+        ? roomPlayers.map((p) => ({
+            ...p,
+            score: p.playerId === profile.uid ? score : (p.score ?? 0),
+            distance:
+              p.playerId === profile.uid
+                ? levelSolved
+                  ? 100
+                  : completionPct
+                : p.distance,
+          }))
+        : [];
+
+    rawPlayers.sort((a, b) => {
+      if ((b.score ?? 0) !== (a.score ?? 0)) return (b.score ?? 0) - (a.score ?? 0);
+      if (b.distance !== a.distance) return b.distance - a.distance;
+      if (a.finishTimeMs > 0 && b.finishTimeMs > 0 && a.finishTimeMs !== b.finishTimeMs) {
+        return a.finishTimeMs - b.finishTimeMs;
+      }
+      return a.nickname.localeCompare(b.nickname);
+    });
+
+    const rankedPlayers: (RoomPlayerRecord & { computedRank: number })[] = [];
+    rawPlayers.forEach((p, idx) => {
+      if (idx === 0) {
+        rankedPlayers.push({ ...p, computedRank: 1 });
+        return;
+      }
+      const prev = rankedPlayers[idx - 1];
+      const isTied =
+        (p.score ?? 0) === (prev.score ?? 0) && p.distance === prev.distance;
+      rankedPlayers.push({
+        ...p,
+        computedRank: isTied ? prev.computedRank : idx + 1,
+      });
+    });
+
+    const myRank =
+      rankedPlayers.find((p) => p.playerId === profile.uid)?.computedRank || 1;
+    const totalAns = Math.max(1, movesCount + mistakesCount);
+    const accuracyPct = Math.min(100, Math.round((movesCount / totalAns) * 100));
 
     return (
       <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
           <div className="flex flex-col items-center text-center">
-            <GameTileArtwork gameId={gameId} className="h-24 w-24" />
-            <span className="mt-3 text-xs font-extrabold tracking-wider text-[#2563EB] uppercase">
-              TROJO — A Fun Nagar · {gameInfo.name}
-            </span>
-            <h1 className="mt-1 font-display text-3xl font-extrabold text-slate-900">
-              {levelSolved ? `Level ${currentLevel} Complete!` : 'Game Summary'}
+            <div className="h-20 w-20 overflow-hidden rounded-2xl shadow-sm">
+              <GameTileArtwork gameId={gameId} />
+            </div>
+            <h1 className="mt-3 font-display text-2xl font-black text-slate-900 sm:text-3xl">
+              {levelSolved ? `Level ${currentLevel} Complete!` : 'Game Complete'}
             </h1>
-            <p className="mt-1 text-sm text-slate-600">
-              Great job, <strong>{profile.nickname}</strong>!
+            <p className="mt-1 text-sm font-bold text-slate-500">
+              {gameInfo.name} · {isMultiplayer ? `Rank #${myRank}` : `Solo Record`}
             </p>
           </div>
 
-          {/* Score Metrics */}
-          <div className="mt-6 grid grid-cols-3 gap-3">
+          {/* Score, Performance & Rank Cards */}
+          <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="rounded-2xl border border-purple-200 bg-purple-50/70 p-4 text-center">
-              <span className="text-xs font-bold text-purple-800">Total Points</span>
-              <p className="mt-1 font-mono text-2xl font-black text-purple-950 tabular-nums sm:text-3xl">
+              <span className="text-xs font-bold text-purple-800">Final Score</span>
+              <p className="mt-1 font-mono text-2xl font-black text-purple-950 tabular-nums">
                 {score}
               </p>
             </div>
+            <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 text-center">
+              <span className="text-xs font-bold text-amber-900">Rank</span>
+              <p className="mt-1 font-mono text-2xl font-black text-amber-950 tabular-nums">
+                #{myRank}
+              </p>
+            </div>
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 text-center">
-              <span className="text-xs font-bold text-emerald-800">Level Reached</span>
-              <p className="mt-1 font-mono text-2xl font-black text-emerald-950 tabular-nums sm:text-3xl">
-                Lv.{currentLevel}
+              <span className="text-xs font-bold text-emerald-800">Accuracy</span>
+              <p className="mt-1 font-mono text-2xl font-black text-emerald-950 tabular-nums">
+                {accuracyPct}%
               </p>
             </div>
             <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-4 text-center">
               <span className="text-xs font-bold text-blue-800">Time</span>
-              <p className="mt-1 font-mono text-2xl font-black text-blue-950 tabular-nums sm:text-3xl">
+              <p className="mt-1 font-mono text-2xl font-black text-blue-950 tabular-nums">
                 {(elapsedMs / 1000).toFixed(1)}s
               </p>
             </div>
           </div>
 
-          {/* Multiplayer Standings if 2P / 4P */}
-          {isMultiplayer && sortedPlayers.length > 0 && (
+          {/* Multiplayer Leaderboard-Style Results Table (1st, 2nd, 3rd Highlighted) */}
+          {isMultiplayer && rankedPlayers.length > 0 && (
             <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <h3 className="text-xs font-extrabold tracking-wider text-slate-500 uppercase">
-                Multiplayer Room Standings ({roomCode})
+                Final Standings · Room {roomCode}
               </h3>
               <div className="mt-3 space-y-2">
-                {sortedPlayers.map((p, idx) => (
-                  <div
-                    key={p.playerId}
-                    className="flex items-center justify-between rounded-xl bg-white px-4 py-2.5 shadow-2xs"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <span className="font-mono text-xs font-black text-slate-700">
-                        #{idx + 1}
-                      </span>
-                      <span className="text-sm font-bold text-slate-900">
-                        {p.nickname}
+                {rankedPlayers.map((p) => {
+                  const isMe = p.playerId === profile.uid;
+                  const rankBadge =
+                    p.computedRank === 1
+                      ? 'bg-amber-400 text-slate-950'
+                      : p.computedRank === 2
+                        ? 'bg-slate-300 text-slate-900'
+                        : p.computedRank === 3
+                          ? 'bg-orange-300 text-orange-950'
+                          : 'bg-slate-100 text-slate-700';
+
+                  return (
+                    <div
+                      key={p.playerId}
+                      className={`flex items-center justify-between rounded-xl border px-4 py-2.5 shadow-2xs ${
+                        p.computedRank === 1
+                          ? 'border-amber-300 bg-amber-50/70'
+                          : isMe
+                            ? 'border-blue-300 bg-blue-50/60'
+                            : 'border-slate-200 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`inline-flex h-7 min-w-[36px] items-center justify-center rounded-lg px-2 font-mono text-xs font-black ${rankBadge}`}
+                        >
+                          {p.computedRank === 1
+                            ? '1st'
+                            : p.computedRank === 2
+                              ? '2nd'
+                              : p.computedRank === 3
+                                ? '3rd'
+                                : `#${p.computedRank}`}
+                        </span>
+                        <span className="text-sm font-extrabold text-slate-900">
+                          {p.nickname} {isMe ? '(You)' : ''}
+                        </span>
+                      </div>
+                      <span className="font-mono text-sm font-black text-[#7C3AED] tabular-nums">
+                        {p.score ?? 0} pts ({p.distance}%)
                       </span>
                     </div>
-                    <span className="font-mono text-sm font-extrabold text-purple-700 tabular-nums">
-                      {p.score ?? 0} pts ({p.distance}%)
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
 
-          {/* 3 Mandatory Solid Action Buttons */}
+          {/* Action Buttons: Replay / Replay With Same Players, More Games, Share */}
           <div className="mt-7 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <button
-              type="button"
-              onClick={handleOpenShareModal}
-              className="flex min-h-[50px] items-center justify-center gap-2 rounded-2xl bg-[#7C3AED] px-5 py-3.5 text-sm font-extrabold text-white shadow-sm transition-colors hover:bg-purple-700"
-            >
-              <Share2 className="h-4 w-4" />
-              <span>Share Score</span>
-            </button>
-
             {isMultiplayer && roomCode && onReplayMultiplayer ? (
               <button
                 type="button"
@@ -1775,7 +1861,7 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
                 className="flex min-h-[50px] items-center justify-center gap-2 rounded-2xl bg-[#16A34A] px-5 py-3.5 text-sm font-extrabold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:opacity-50"
               >
                 <RotateCcw className="h-4 w-4" />
-                <span>Replay Same Players</span>
+                <span>Replay With Same Players</span>
               </button>
             ) : (
               <button
@@ -1784,14 +1870,20 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
                   soundEngine.playClick();
                   savedResultRef.current = false;
                   setMatchFinished(false);
-                  const nextLvl = levelSolved ? Math.min(20, currentLevel + 1) : currentLevel;
+                  const nextLvl = levelSolved
+                    ? Math.min(20, currentLevel + 1)
+                    : currentLevel;
                   setCurrentLevel(nextLvl);
                   initLevelBoard(nextLvl);
                 }}
                 className="flex min-h-[50px] items-center justify-center gap-2 rounded-2xl bg-[#16A34A] px-5 py-3.5 text-sm font-extrabold text-white shadow-sm transition-colors hover:bg-emerald-700"
               >
                 <RotateCcw className="h-4 w-4" />
-                <span>{levelSolved ? `Play Level ${Math.min(20, currentLevel + 1)}` : 'Replay Level'}</span>
+                <span>
+                  {levelSolved
+                    ? `Next Level (${Math.min(20, currentLevel + 1)})`
+                    : 'Replay'}
+                </span>
               </button>
             )}
 
@@ -1804,7 +1896,16 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
               className="flex min-h-[50px] items-center justify-center gap-2 rounded-2xl bg-[#2563EB] px-5 py-3.5 text-sm font-extrabold text-white shadow-sm transition-colors hover:bg-blue-700"
             >
               <Gamepad2 className="h-4 w-4" />
-              <span>Play More Games</span>
+              <span>More Games</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleOpenShareModal}
+              className="flex min-h-[50px] items-center justify-center gap-2 rounded-2xl bg-[#7C3AED] px-5 py-3.5 text-sm font-extrabold text-white shadow-sm transition-colors hover:bg-purple-700"
+            >
+              <Share2 className="h-4 w-4" />
+              <span>Share Score</span>
             </button>
           </div>
         </div>
@@ -1881,21 +1982,21 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-2.5 py-2 sm:px-4 sm:py-3">
-      {/* Compact Top HUD Bar: Back, Game + Level, Progress Bar, Score, Finish */}
-      <div className="mb-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-2xs sm:px-4">
+    <div className="mx-auto flex h-[100dvh] w-full max-w-3xl flex-col justify-between overflow-hidden px-2.5 py-2 select-none sm:px-4 sm:py-3">
+      {/* Compact Top HUD Bar: Exit, Game + Level, Progress Bar, Score, Finish Game */}
+      <div className="mb-1.5 shrink-0 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-2xs sm:px-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => {
                 soundEngine.playClick();
-                onExitToHome();
+                setExitConfirmOpen(true);
               }}
               className="inline-flex h-8 items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 px-2.5 text-xs font-bold text-slate-700 hover:bg-slate-100"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
-              <span>Back</span>
+              <span>Exit</span>
             </button>
             <div>
               <h1 className="font-display text-sm font-extrabold leading-tight text-slate-900 sm:text-base">
@@ -1907,7 +2008,7 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
             </div>
           </div>
 
-          {/* Level Selector (Solo — Locked Levels Disabled) & Score Display */}
+          {/* Level Selector (Solo — Locked Levels Disabled), Score & Finish Game */}
           <div className="flex items-center gap-1.5 sm:gap-2">
             {!isMultiplayer && (
               <select
@@ -1942,10 +2043,17 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
 
             <button
               type="button"
-              onClick={() => handleFinalizeMatch(score)}
+              onClick={() => {
+                soundEngine.playClick();
+                if (levelSolved) {
+                  handleFinalizeMatch(score);
+                } else {
+                  setFinishConfirmOpen(true);
+                }
+              }}
               className="h-8 rounded-xl bg-[#2563EB] px-2.5 text-xs font-extrabold text-white hover:bg-blue-700"
             >
-              Finish
+              Finish Game
             </button>
           </div>
         </div>
@@ -2595,6 +2703,79 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
                   );
                 })
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Exit Active Game Confirmation Modal */}
+      {exitConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-2xl">
+            <h3 className="font-display text-lg font-black text-slate-900">
+              Leave Active Game?
+            </h3>
+            <p className="mt-1.5 text-xs font-semibold text-slate-500">
+              Your current round progress will not be saved if you exit now.
+            </p>
+            <div className="mt-5 grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playClick();
+                  setExitConfirmOpen(false);
+                }}
+                className="min-h-[44px] rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-extrabold text-slate-700 hover:bg-slate-100"
+              >
+                Keep Playing
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playClick();
+                  setExitConfirmOpen(false);
+                  onExitToHome();
+                }}
+                className="min-h-[44px] rounded-2xl bg-rose-600 px-4 py-2.5 text-xs font-extrabold text-white hover:bg-rose-700"
+              >
+                Exit Game
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Finish Game Confirmation Modal */}
+      {finishConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-2xl">
+            <h3 className="font-display text-lg font-black text-slate-900">
+              Finish Game Now?
+            </h3>
+            <p className="mt-1.5 text-xs font-semibold text-slate-500">
+              End this game now and record your current score ({score} pts)?
+            </p>
+            <div className="mt-5 grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playClick();
+                  setFinishConfirmOpen(false);
+                }}
+                className="min-h-[44px] rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-extrabold text-slate-700 hover:bg-slate-100"
+              >
+                Keep Playing
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFinishConfirmOpen(false);
+                  handleFinalizeMatch(score);
+                }}
+                className="min-h-[44px] rounded-2xl bg-[#2563EB] px-4 py-2.5 text-xs font-extrabold text-white hover:bg-blue-700"
+              >
+                Finish &amp; Save
+              </button>
+            </div>
           </div>
         </div>
       )}

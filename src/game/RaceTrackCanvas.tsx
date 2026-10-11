@@ -68,8 +68,8 @@ export const RaceTrackCanvas: React.FC<RaceTrackCanvasProps> = ({
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
       const width = Math.max(300, rect.width);
-      const laneCount = Math.max(1, Math.min(4, Math.max(racers.length, maxLanes)));
-      const laneHeight = laneCount === 1 ? 68 : laneCount === 2 ? 58 : 50;
+      const laneCount = Math.max(1, Math.min(8, Math.max(racers.length, maxLanes)));
+      const laneHeight = laneCount === 1 ? 68 : laneCount === 2 ? 58 : laneCount <= 4 ? 50 : 40;
       const headerHeight = 28;
       const height = headerHeight + laneCount * laneHeight + 8;
 
@@ -333,8 +333,8 @@ export const RaceTrackCanvas: React.FC<RaceTrackCanvasProps> = ({
     return () => cancelAnimationFrame(animationFrameId);
   }, [racers, maxLanes]);
 
-  const laneCount = Math.max(1, Math.min(4, Math.max(racers.length, maxLanes)));
-  const laneHeight = laneCount === 1 ? 68 : laneCount === 2 ? 58 : 50;
+  const laneCount = Math.max(1, Math.min(8, Math.max(racers.length, maxLanes)));
+  const laneHeight = laneCount === 1 ? 68 : laneCount === 2 ? 58 : laneCount <= 4 ? 50 : 40;
   const computedHeight = 28 + laneCount * laneHeight + 8;
 
   return (

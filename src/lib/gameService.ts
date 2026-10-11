@@ -27,6 +27,7 @@ import {
   QuestionKeyItem,
   QuestionReportRecord,
   RaceResultRecord,
+  RoomCapacityOption,
   RoomPlayerRecord,
   RoomRecord,
   TrojoGameId,
@@ -610,7 +611,7 @@ export async function resolveQuestionAnswer(
 
 export async function createMultiplayerRoom(
   profile: PlayerProfile,
-  maxPlayers: 2 | 4,
+  maxPlayers: RoomCapacityOption,
   category: QuestionCategory,
   difficulty: QuestionDifficulty,
   questionTimeLimitSec: number,

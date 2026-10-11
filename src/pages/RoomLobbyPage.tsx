@@ -417,12 +417,14 @@ export const RoomLobbyPage: React.FC<RoomLobbyPageProps> = ({
           </div>
         </div>
 
-        {/* CIRCULAR PLAYER SLOTS (2 OR 4 CIRCLES) */}
+        {/* CIRCULAR PLAYER SLOTS (2, 3, 4, OR 8 CIRCLES) */}
         <div
-          className={`mx-auto mt-8 grid max-w-3xl gap-4 ${
-            room.maxPlayers === 4
+          className={`mx-auto mt-8 grid max-w-4xl gap-4 ${
+            room.maxPlayers >= 4
               ? 'grid-cols-2 sm:grid-cols-4'
-              : 'max-w-md grid-cols-2'
+              : room.maxPlayers === 3
+                ? 'max-w-2xl grid-cols-2 sm:grid-cols-3'
+                : 'max-w-md grid-cols-2'
           }`}
         >
           {Array.from({ length: room.maxPlayers }).map((_, idx) => {
