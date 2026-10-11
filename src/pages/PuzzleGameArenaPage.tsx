@@ -187,142 +187,242 @@ interface WordFinderLevelSpec {
   bonusWords: string[];
 }
 
-const WORD_FINDER_LEVELS: WordFinderLevelSpec[] = [
+/**
+ * Deterministic crossword placement engine.
+ * Guarantees:
+ * 1. Words only cross where both words share the EXACT same letter.
+ * 2. Parallel words never touch side-by-side or end-to-end (eliminating fake sequences like "TTT").
+ */
+function layoutCrosswordWords(targetWords: string[]): WordPlacement[] {
+  const placed: WordPlacement[] = [];
+  const grid = new Map<string, { char: string; dirs: Set<'H' | 'V'> }>();
+
+  const getCell = (r: number, c: number) => grid.get(`${r},${c}`);
+  const setCell = (r: number, c: number, char: string, dir: 'H' | 'V') => {
+    const key = `${r},${c}`;
+    const cur = grid.get(key);
+    if (cur) {
+      cur.dirs.add(dir);
+    } else {
+      grid.set(key, { char, dirs: new Set([dir]) });
+    }
+  };
+
+  const canPlace = (word: string, startR: number, startC: number, dir: 'H' | 'V'): number => {
+    const dr = dir === 'V' ? 1 : 0;
+    const dc = dir === 'H' ? 1 : 0;
+
+    // Cell immediately before start and after end must be empty
+    if (getCell(startR - dr, startC - dc)) return -1;
+    if (getCell(startR + word.length * dr, startC + word.length * dc)) return -1;
+
+    let intersections = 0;
+    for (let i = 0; i < word.length; i++) {
+      const r = startR + i * dr;
+      const c = startC + i * dc;
+      const existing = getCell(r, c);
+
+      if (existing) {
+        if (existing.char !== word[i]) return -1;
+        if (existing.dirs.has(dir)) return -1;
+        intersections++;
+      } else {
+        // Non-intersecting cells must NOT have perpendicular neighbors (prevents side-by-side "TTT" touching)
+        if (dir === 'H') {
+          if (getCell(r - 1, c) || getCell(r + 1, c)) return -1;
+        } else {
+          if (getCell(r, c - 1) || getCell(r, c + 1)) return -1;
+        }
+      }
+    }
+    return intersections;
+  };
+
+  const commitPlace = (word: string, startR: number, startC: number, dir: 'H' | 'V') => {
+    const dr = dir === 'V' ? 1 : 0;
+    const dc = dir === 'H' ? 1 : 0;
+    for (let i = 0; i < word.length; i++) {
+      setCell(startR + i * dr, startC + i * dc, word[i], dir);
+    }
+    placed.push({ word, row: startR, col: startC, dir });
+  };
+
+  targetWords.forEach((word, idx) => {
+    if (idx === 0) {
+      commitPlace(word, 0, 0, 'H');
+      return;
+    }
+
+    let best: { r: number; c: number; dir: 'H' | 'V'; score: number } | null = null;
+
+    for (const p of placed) {
+      const nextDir: 'H' | 'V' = p.dir === 'H' ? 'V' : 'H';
+      for (let i = 0; i < p.word.length; i++) {
+        const pr = p.dir === 'V' ? p.row + i : p.row;
+        const pc = p.dir === 'H' ? p.col + i : p.col;
+        for (let j = 0; j < word.length; j++) {
+          if (p.word[i] !== word[j]) continue;
+          const candR = nextDir === 'V' ? pr - j : pr;
+          const candC = nextDir === 'H' ? pc - j : pc;
+          const crossCount = canPlace(word, candR, candC, nextDir);
+          if (crossCount > 0) {
+            // Prefer compact bounding boxes
+            const distPenalty = Math.abs(candR) + Math.abs(candC);
+            const score = crossCount * 20 - distPenalty;
+            if (!best || score > best.score) {
+              best = { r: candR, c: candC, dir: nextDir, score };
+            }
+          }
+        }
+      }
+    }
+
+    if (best) {
+      commitPlace(word, best.r, best.c, best.dir);
+    } else {
+      // Fallback: place on a separated row with an empty buffer row so it never touches adjacent words
+      let maxRow = 0;
+      grid.forEach((_, key) => {
+        const r = Number(key.split(',')[0]);
+        if (r > maxRow) maxRow = r;
+      });
+      commitPlace(word, maxRow + 2, 0, 'H');
+    }
+  });
+
+  // Normalize coordinates so minRow = 0 and minCol = 0
+  let minR = Infinity;
+  let minC = Infinity;
+  for (const p of placed) {
+    if (p.row < minR) minR = p.row;
+    if (p.col < minC) minC = p.col;
+  }
+
+  return placed.map((p) => ({
+    ...p,
+    row: p.row - minR,
+    col: p.col - minC,
+  }));
+}
+
+interface RawWordLevel {
+  letters: string[];
+  targetWords: string[];
+  bonusWords: string[];
+}
+
+// 20 Verified Word Finder Levels — 100% unique wheel letters per level, zero duplicate letter requirements
+const RAW_WORD_FINDER_LEVELS: RawWordLevel[] = [
   {
-    level: 1,
-    letters: ['P', 'U', 'R', 'E', 'E'],
-    words: [
-      { word: 'PUREE', row: 0, col: 0, dir: 'V' },
-      { word: 'PURE', row: 2, col: 0, dir: 'H' },
-      { word: 'PEER', row: 0, col: 0, dir: 'H' },
-    ],
-    bonusWords: ['PER', 'REP', 'PEE', 'RUE', 'ERE'],
+    letters: ['S', 'T', 'A', 'R'],
+    targetWords: ['STAR', 'ARTS', 'RAT', 'SAT'],
+    bonusWords: ['RATS', 'TAR', 'ART'],
   },
   {
-    level: 2,
-    letters: ['S', 'T', 'A', 'R', 'T'],
-    words: [
-      { word: 'START', row: 0, col: 1, dir: 'V' },
-      { word: 'STAR', row: 0, col: 1, dir: 'H' },
-      { word: 'TART', row: 1, col: 1, dir: 'H' },
-      { word: 'ARTS', row: 2, col: 1, dir: 'H' },
-      { word: 'RATS', row: 3, col: 1, dir: 'H' },
-    ],
-    bonusWords: ['SAT', 'RAT', 'TAR', 'ART', 'STAT'],
+    letters: ['P', 'L', 'A', 'N', 'E'],
+    targetWords: ['PLANE', 'PLAN', 'PALE', 'LEAP'],
+    bonusWords: ['LANE', 'LEAN', 'PEAL', 'PAN', 'PEN'],
   },
   {
-    level: 3,
-    letters: ['P', 'L', 'A', 'N', 'E', 'T'],
-    words: [
-      { word: 'PLANET', row: 0, col: 0, dir: 'H' },
-      { word: 'PLANT', row: 0, col: 0, dir: 'V' },
-      { word: 'PLANE', row: 2, col: 0, dir: 'H' },
-      { word: 'PLATE', row: 4, col: 0, dir: 'H' },
-      { word: 'LATE', row: 0, col: 1, dir: 'V' },
-      { word: 'NEAT', row: 0, col: 3, dir: 'V' },
-    ],
-    bonusWords: ['PLAN', 'PALE', 'TALE', 'LEAP', 'PEAL', 'LANE', 'LEAN', 'TAPE', 'PEAT'],
+    letters: ['T', 'R', 'A', 'I', 'N'],
+    targetWords: ['TRAIN', 'RAIN', 'RANT', 'AIR'],
+    bonusWords: ['ART', 'RAT', 'ANT', 'TAN', 'TIN'],
   },
   {
-    level: 4,
-    letters: ['S', 'P', 'A', 'R', 'K', 'S'],
-    words: [
-      { word: 'SPARKS', row: 0, col: 0, dir: 'H' },
-      { word: 'SPARK', row: 0, col: 0, dir: 'V' },
-      { word: 'PARKS', row: 1, col: 0, dir: 'H' },
-      { word: 'PARK', row: 2, col: 0, dir: 'H' },
-      { word: 'ARK', row: 3, col: 0, dir: 'H' },
-      { word: 'PASS', row: 1, col: 0, dir: 'V' },
-    ],
-    bonusWords: ['ASK', 'ASKS', 'SAP', 'SPA', 'RAP', 'RAPS', 'SPAR'],
+    letters: ['S', 'P', 'A', 'R', 'K'],
+    targetWords: ['SPARK', 'PARK', 'SPAR', 'ARK'],
+    bonusWords: ['ASK', 'SAP', 'SPA', 'RAP'],
   },
   {
-    level: 5,
     letters: ['B', 'R', 'I', 'G', 'H', 'T'],
-    words: [
-      { word: 'BRIGHT', row: 0, col: 0, dir: 'H' },
-      { word: 'RIGHT', row: 1, col: 1, dir: 'H' },
-      { word: 'BIRTH', row: 0, col: 0, dir: 'V' },
-      { word: 'GRIT', row: 0, col: 3, dir: 'V' },
-      { word: 'HIGH', row: 0, col: 4, dir: 'V' },
-    ],
-    bonusWords: ['BIT', 'BIG', 'HIT', 'RIG', 'RIB', 'GIRT', 'TRIG'],
+    targetWords: ['BRIGHT', 'RIGHT', 'BIRTH', 'GRIT'],
+    bonusWords: ['BIT', 'BIG', 'HIT', 'RIG', 'RIB'],
   },
   {
-    level: 6,
     letters: ['C', 'R', 'O', 'W', 'N', 'S'],
-    words: [
-      { word: 'CROWNS', row: 0, col: 0, dir: 'H' },
-      { word: 'CROWN', row: 0, col: 0, dir: 'V' },
-      { word: 'CROWS', row: 2, col: 0, dir: 'H' },
-      { word: 'CORN', row: 0, col: 0, dir: 'H' },
-      { word: 'SNOW', row: 0, col: 5, dir: 'V' },
-      { word: 'WORN', row: 3, col: 0, dir: 'H' },
-    ],
-    bonusWords: ['CROW', 'COW', 'COWS', 'ROW', 'ROWS', 'NOW', 'OWN', 'OWNS', 'SON', 'WON'],
+    targetWords: ['CROWNS', 'CROWN', 'SNOW', 'CORN'],
+    bonusWords: ['CROWS', 'CROW', 'WORN', 'COW', 'ROW', 'NOW', 'OWN', 'SON', 'WON'],
   },
   {
-    level: 7,
     letters: ['F', 'L', 'I', 'G', 'H', 'T'],
-    words: [
-      { word: 'FLIGHT', row: 0, col: 0, dir: 'H' },
-      { word: 'LIGHT', row: 0, col: 1, dir: 'V' },
-      { word: 'FIGHT', row: 0, col: 0, dir: 'V' },
-      { word: 'GIFT', row: 3, col: 0, dir: 'H' },
-      { word: 'LIFT', row: 0, col: 1, dir: 'H' },
-    ],
-    bonusWords: ['FIT', 'FIG', 'LIT', 'HIT', 'HILT', 'GILT', 'FLIT'],
+    targetWords: ['FLIGHT', 'LIGHT', 'FIGHT', 'GIFT'],
+    bonusWords: ['LIFT', 'FIT', 'FIG', 'LIT', 'HIT', 'HILT'],
   },
   {
-    level: 8,
     letters: ['S', 'T', 'R', 'E', 'A', 'M'],
-    words: [
-      { word: 'STREAM', row: 0, col: 0, dir: 'H' },
-      { word: 'MASTER', row: 0, col: 5, dir: 'V' },
-      { word: 'STEAM', row: 0, col: 0, dir: 'V' },
-      { word: 'SMART', row: 4, col: 0, dir: 'H' },
-      { word: 'TEAMS', row: 1, col: 0, dir: 'H' },
-    ],
-    bonusWords: ['TEAM', 'MEAT', 'MATE', 'TAME', 'STAR', 'STARE', 'RATES', 'TEARS', 'MARES'],
+    targetWords: ['STREAM', 'MASTER', 'STEAM', 'SMART'],
+    bonusWords: ['TEAMS', 'TEAM', 'MEAT', 'MATE', 'TAME', 'STAR', 'STARE', 'RATES'],
   },
   {
-    level: 9,
     letters: ['G', 'A', 'R', 'D', 'E', 'N'],
-    words: [
-      { word: 'GARDEN', row: 0, col: 0, dir: 'H' },
-      { word: 'DANGER', row: 0, col: 3, dir: 'V' },
-      { word: 'GRAND', row: 0, col: 0, dir: 'V' },
-      { word: 'GRADE', row: 2, col: 0, dir: 'H' },
-      { word: 'RANGE', row: 1, col: 0, dir: 'H' },
-    ],
-    bonusWords: ['DARE', 'DEAR', 'READ', 'GEAR', 'RAGE', 'NEAR', 'EARN', 'AGED', 'DRAG'],
+    targetWords: ['GARDEN', 'DANGER', 'GRAND', 'GRADE'],
+    bonusWords: ['RANGE', 'DARE', 'DEAR', 'READ', 'GEAR', 'RAGE', 'NEAR', 'EARN'],
   },
   {
-    level: 10,
     letters: ['C', 'A', 'S', 'T', 'L', 'E'],
-    words: [
-      { word: 'CASTLE', row: 0, col: 0, dir: 'H' },
-      { word: 'SCALE', row: 0, col: 2, dir: 'V' },
-      { word: 'SLATE', row: 2, col: 0, dir: 'H' },
-      { word: 'LEAST', row: 4, col: 0, dir: 'H' },
-      { word: 'TALES', row: 0, col: 3, dir: 'V' },
-    ],
-    bonusWords: ['CAST', 'LATE', 'SALE', 'SEAL', 'SEAT', 'EAST', 'CATS', 'ACTS', 'LACE'],
+    targetWords: ['CASTLE', 'SCALE', 'SLATE', 'TALES'],
+    bonusWords: ['LEAST', 'CAST', 'LATE', 'SALE', 'SEAL', 'SEAT', 'EAST'],
+  },
+  {
+    letters: ['P', 'L', 'A', 'N', 'E', 'T'],
+    targetWords: ['PLANET', 'PLANT', 'PLANE', 'LATE'],
+    bonusWords: ['PLATE', 'NEAT', 'PLAN', 'PALE', 'TALE', 'LEAP', 'LANE', 'TAPE'],
+  },
+  {
+    letters: ['S', 'I', 'L', 'V', 'E', 'R'],
+    targetWords: ['SILVER', 'LIVER', 'LIVES', 'RISE'],
+    bonusWords: ['LIVE', 'VEIL', 'VILE', 'SIRE', 'LIE'],
+  },
+  {
+    letters: ['F', 'O', 'R', 'E', 'S', 'T'],
+    targetWords: ['FOREST', 'FROST', 'STORE', 'ROSE'],
+    bonusWords: ['FORTE', 'FORT', 'REST', 'SORT', 'SORE', 'TOE'],
+  },
+  {
+    letters: ['W', 'I', 'N', 'T', 'E', 'R'],
+    targetWords: ['WINTER', 'WRITE', 'TWINE', 'WIRE'],
+    bonusWords: ['TWIN', 'RENT', 'TIRE', 'TIER', 'WIN', 'WET'],
+  },
+  {
+    letters: ['G', 'O', 'L', 'D', 'E', 'N'],
+    targetWords: ['GOLDEN', 'LODGE', 'GOLD', 'GONE'],
+    bonusWords: ['LEND', 'DONE', 'LONE', 'NODE', 'DOG', 'LOG'],
+  },
+  {
+    letters: ['S', 'H', 'A', 'D', 'O', 'W'],
+    targetWords: ['SHADOW', 'SHOW', 'WASH', 'DASH'],
+    bonusWords: ['SOD', 'SAW', 'SAD', 'HAD', 'WHO'],
+  },
+  {
+    letters: ['B', 'R', 'I', 'D', 'G', 'E'],
+    targetWords: ['BRIDGE', 'BRIDE', 'RIDGE', 'BIRD'],
+    bonusWords: ['RIDE', 'GRID', 'DIRE', 'RED', 'BED', 'BIG'],
+  },
+  {
+    letters: ['S', 'P', 'R', 'I', 'N', 'G'],
+    targetWords: ['SPRING', 'RINGS', 'RING', 'SPIN'],
+    bonusWords: ['GRIN', 'SING', 'SIGN', 'PINS', 'SNIP', 'PIN'],
+  },
+  {
+    letters: ['M', 'A', 'R', 'K', 'E', 'T'],
+    targetWords: ['MARKET', 'MAKER', 'MAKE', 'TEAM'],
+    bonusWords: ['TAKE', 'RATE', 'TEAR', 'MEAT', 'MATE', 'TAME', 'ART'],
+  },
+  {
+    letters: ['T', 'R', 'A', 'V', 'E', 'L'],
+    targetWords: ['TRAVEL', 'LATER', 'ALERT', 'TALE'],
+    bonusWords: ['ALTER', 'RATE', 'TEAR', 'LATE', 'REAL', 'EAR'],
   },
 ];
 
-// Upgrade Level 1 so all 4 words intersect cleanly on a 5x5 grid
-WORD_FINDER_LEVELS[0] = {
-  level: 1,
-  letters: ['P', 'U', 'R', 'E', 'E'],
-  words: [
-    { word: 'PUREE', row: 0, col: 0, dir: 'V' },
-    { word: 'PEE', row: 0, col: 0, dir: 'H' },
-    { word: 'PURE', row: 2, col: 0, dir: 'H' },
-    { word: 'PEER', row: 4, col: 0, dir: 'H' },
-  ],
-  bonusWords: ['PER', 'REP', 'RUE', 'ERE'],
-};
+const WORD_FINDER_LEVELS: WordFinderLevelSpec[] = RAW_WORD_FINDER_LEVELS.map(
+  (raw, idx) => ({
+    level: idx + 1,
+    letters: raw.letters,
+    words: layoutCrosswordWords(raw.targetWords),
+    bonusWords: raw.bonusWords,
+  })
+);
 
 function getWordFinderLevel(levelNumber: number): WordFinderLevelSpec {
   const idx = (Math.max(1, levelNumber) - 1) % WORD_FINDER_LEVELS.length;
@@ -621,19 +721,32 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
   const gameInfo = TROJO_GAME_MAP[gameId] || TROJO_GAME_MAP.water_sort;
   const seedBase = roomCode || 'SOLO_TROJO';
 
-  // Level & Score State
+  // Level & Score State (Enforce unlocked levels in Solo mode)
+  const [unlockedLevel, setUnlockedLevel] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(`trojo_unlocked_lvl_${gameId}`);
+      if (saved) {
+        const parsed = Number(saved);
+        if (!Number.isNaN(parsed) && parsed >= 1 && parsed <= 20) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return 1;
+  });
+
   const [currentLevel, setCurrentLevel] = useState<number>(() => {
     if (isMultiplayer) {
       return difficulty === 'hard' ? 8 : difficulty === 'medium' ? 4 : 1;
     }
-    return Math.max(1, Math.min(20, initialLevel));
-  });
-  const [unlockedLevel, setUnlockedLevel] = useState<number>(() => {
     try {
       const saved = localStorage.getItem(`trojo_unlocked_lvl_${gameId}`);
-      return saved ? Math.max(1, Number(saved)) : 3;
+      const maxUnlocked = saved ? Math.max(1, Math.min(20, Number(saved))) : 1;
+      return Math.max(1, Math.min(maxUnlocked, initialLevel));
     } catch {
-      return 3;
+      return 1;
     }
   });
 
@@ -1768,91 +1881,112 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-3 py-5 sm:px-6">
-      {/* Top Bar: Game Name, Level Selector, Points, and Exit */}
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white px-4 py-3 shadow-xs sm:px-5">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              soundEngine.playClick();
-              onExitToHome();
-            }}
-            className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            <span>Back</span>
-          </button>
-          <div>
-            <h1 className="font-display text-lg font-extrabold text-slate-900 sm:text-xl">
-              {gameInfo.name}
-            </h1>
-            <p className="text-xs font-bold text-slate-500">
-              Level {currentLevel} of 20 · {isMultiplayer ? `Room ${roomCode}` : 'Solo Puzzle'}
-            </p>
+    <div className="mx-auto max-w-3xl px-2.5 py-2 sm:px-4 sm:py-3">
+      {/* Compact Top HUD Bar: Back, Game + Level, Progress Bar, Score, Finish */}
+      <div className="mb-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-2xs sm:px-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playClick();
+                onExitToHome();
+              }}
+              className="inline-flex h-8 items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 px-2.5 text-xs font-bold text-slate-700 hover:bg-slate-100"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              <span>Back</span>
+            </button>
+            <div>
+              <h1 className="font-display text-sm font-extrabold leading-tight text-slate-900 sm:text-base">
+                {gameInfo.name}
+              </h1>
+              <p className="text-[11px] font-bold text-slate-500">
+                Lv.{currentLevel}/20 · {isMultiplayer ? `Room ${roomCode}` : `Unlocked Lv.${unlockedLevel}`}
+              </p>
+            </div>
           </div>
-        </div>
 
-        {/* Level Selector (Solo) & Score Display */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          {!isMultiplayer && (
-            <div className="flex items-center gap-1.5">
-              <label className="text-xs font-bold text-slate-500">Level:</label>
+          {/* Level Selector (Solo — Locked Levels Disabled) & Score Display */}
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            {!isMultiplayer && (
               <select
                 value={currentLevel}
                 onChange={(e) => {
+                  const nextLvl = Number(e.target.value);
+                  if (nextLvl > unlockedLevel) {
+                    soundEngine.playBrakeWrong();
+                    showToast(`Complete Level ${unlockedLevel} first to unlock Level ${nextLvl}!`);
+                    return;
+                  }
                   soundEngine.playClick();
-                  setCurrentLevel(Number(e.target.value));
+                  setCurrentLevel(nextLvl);
                 }}
-                className="min-h-[38px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-extrabold text-slate-900"
+                aria-label="Select Level"
+                className="h-8 rounded-xl border border-slate-200 bg-slate-50 px-2 text-xs font-extrabold text-slate-900"
               >
-                {Array.from({ length: 20 }, (_, i) => i + 1).map((lvl) => (
-                  <option key={lvl} value={lvl}>
-                    Level {lvl} {lvl <= unlockedLevel ? '🔓' : '⭐'}
-                  </option>
-                ))}
+                {Array.from({ length: 20 }, (_, i) => i + 1).map((lvl) => {
+                  const isAllowed = lvl <= unlockedLevel;
+                  return (
+                    <option key={lvl} value={lvl} disabled={!isAllowed}>
+                      Lv.{lvl} {isAllowed ? '🔓' : '🔒'}
+                    </option>
+                  );
+                })}
               </select>
+            )}
+
+            <div className="rounded-xl bg-purple-50 px-2.5 py-1 text-xs font-extrabold text-purple-900">
+              <span className="font-mono tabular-nums">{score} pts</span>
             </div>
-          )}
 
-          <div className="rounded-xl bg-purple-50 px-3.5 py-2 text-xs font-extrabold text-purple-900">
-            Score: <span className="font-mono tabular-nums">{score} pts</span>
+            <button
+              type="button"
+              onClick={() => handleFinalizeMatch(score)}
+              className="h-8 rounded-xl bg-[#2563EB] px-2.5 text-xs font-extrabold text-white hover:bg-blue-700"
+            >
+              Finish
+            </button>
           </div>
+        </div>
 
-          <button
-            type="button"
-            onClick={() => handleFinalizeMatch(score)}
-            className="min-h-[38px] rounded-xl bg-[#2563EB] px-3.5 py-2 text-xs font-extrabold text-white hover:bg-blue-700"
-          >
-            Finish &amp; Save
-          </button>
+        {/* Always-Visible Full Progress Bar */}
+        <div className="mt-2 flex items-center gap-2.5">
+          <span className="text-[10px] font-extrabold tracking-wider text-slate-500 uppercase shrink-0">
+            Progress
+          </span>
+          <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+            <div
+              className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+              style={{ width: `${Math.min(100, Math.max(4, completionPct))}%` }}
+            />
+          </div>
+          <span className="font-mono text-[11px] font-black text-emerald-700 tabular-nums shrink-0">
+            {completionPct}%
+          </span>
         </div>
       </div>
 
-      {/* Live Multiplayer Opponent Race Strip */}
+      {/* Compact Live Multiplayer Opponent Race Strip */}
       {isMultiplayer && roomPlayers.length > 0 && (
-        <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-2xs">
-          <div className="mb-2 flex items-center justify-between text-xs font-extrabold text-slate-600">
-            <span>LIVE MULTIPLAYER PUZZLE RACE ({roomCode})</span>
-            <span>First to 100% or Highest Score Wins!</span>
-          </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="mb-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-2xs">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {roomPlayers.map((p) => {
               const cInfo = CAR_PALETTE[p.carColor] || CAR_PALETTE.blue;
               return (
                 <div
                   key={p.playerId}
-                  className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2"
+                  className="rounded-lg border border-slate-100 bg-slate-50 px-2 py-1"
                 >
-                  <div className="flex items-center justify-between text-xs font-bold">
-                    <span className="text-slate-900">
-                      {p.nickname} {p.playerId === profile.uid ? '(You)' : ''}
+                  <div className="flex items-center justify-between text-[11px] font-bold">
+                    <span className="truncate text-slate-900">
+                      {p.nickname}
                     </span>
                     <span className="font-mono text-purple-700 tabular-nums">
-                      {p.score ?? 0} pts · {p.distance}%
+                      {p.distance}%
                     </span>
                   </div>
-                  <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
                     <div
                       className="h-full rounded-full transition-all duration-300"
                       style={{
@@ -1868,29 +2002,25 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
         </div>
       )}
 
-      {/* Toast Feedback Banner */}
+      {/* Compact Toast Feedback Banner */}
       {statusToast && (
-        <div className="mb-3 rounded-2xl bg-slate-900 px-4 py-2.5 text-center text-xs font-bold text-white shadow-md">
+        <div className="mb-2 rounded-xl bg-slate-900 px-3 py-1.5 text-center text-xs font-bold text-white shadow-sm">
           {statusToast}
         </div>
       )}
 
       {/* Level Cleared Celebration Banner (Solo Mode) */}
       {levelSolved && !isMultiplayer && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-4 rounded-3xl border-2 border-emerald-400 bg-emerald-50 p-5 shadow-md">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-2xl border-2 border-emerald-400 bg-emerald-50 px-3.5 py-2.5 shadow-sm">
           <div>
-            <span className="text-xs font-extrabold tracking-wider text-emerald-700 uppercase">
-              Puzzle Solved!
-            </span>
-            <h2 className="font-display text-2xl font-black text-emerald-950">
-              Level {currentLevel} Complete! 🎉
+            <h2 className="font-display text-sm font-black text-emerald-950 sm:text-base">
+              Level {currentLevel} Complete! 🎉 ({score} pts)
             </h2>
-            <p className="text-xs font-semibold text-emerald-800">
-              Current Score: <strong>{score} pts</strong> · Continue to Level{' '}
-              {Math.min(20, currentLevel + 1)} or save your score to the leaderboard!
+            <p className="text-[11px] font-semibold text-emerald-800">
+              Level {Math.min(20, currentLevel + 1)} is now unlocked!
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center gap-2">
             {currentLevel < 20 && (
               <button
                 type="button"
@@ -1898,76 +2028,71 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
                   soundEngine.playClick();
                   setCurrentLevel((l) => Math.min(20, l + 1));
                 }}
-                className="min-h-[46px] rounded-2xl bg-[#16A34A] px-5 py-3 text-sm font-extrabold text-white shadow-sm hover:bg-emerald-700"
+                className="h-9 rounded-xl bg-[#16A34A] px-3.5 text-xs font-extrabold text-white shadow-2xs hover:bg-emerald-700"
               >
-                Next Level (Level {currentLevel + 1}) →
+                Next Level ({currentLevel + 1}) →
               </button>
             )}
             <button
               type="button"
               onClick={() => handleFinalizeMatch(score)}
-              className="min-h-[46px] rounded-2xl bg-[#7C3AED] px-5 py-3 text-sm font-extrabold text-white shadow-sm hover:bg-purple-700"
+              className="h-9 rounded-xl bg-[#7C3AED] px-3.5 text-xs font-extrabold text-white shadow-2xs hover:bg-purple-700"
             >
-              Finish &amp; Share Score
+              Save &amp; Share
             </button>
           </div>
         </div>
       )}
 
       {/* ==================================================================== */}
-      {/* 1. WATER SORT PUZZLE BOARD                                           */}
+      {/* 1. WATER SORT PUZZLE BOARD (Compact Mobile-Friendly Tubes)           */}
       {/* ==================================================================== */}
       {gameId === 'water_sort' && (
-        <div className="rounded-[32px] bg-[#221238] p-5 text-white shadow-xl sm:p-8">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
-            <div>
-              <span className="text-xs font-extrabold tracking-wider text-amber-300 uppercase">
-                WATER SORT · LEVEL {currentLevel}
-              </span>
-              <p className="mt-0.5 text-xs text-purple-200">
-                Tap a tube to pick it up, then tap another tube with the same top color or an empty tube to pour!
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
+        <div className="rounded-3xl bg-[#221238] p-3.5 text-white shadow-lg sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2.5">
+            <span className="text-xs font-extrabold tracking-wider text-amber-300 uppercase">
+              WATER SORT · LV.{currentLevel}
+            </span>
+            <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 onClick={handleWaterSortUndo}
                 disabled={tubeHistory.length === 0}
-                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-white/10 px-3.5 py-2 text-xs font-bold text-white hover:bg-white/20 disabled:opacity-40"
+                className="inline-flex h-8 items-center gap-1 rounded-lg bg-white/10 px-2.5 text-[11px] font-bold text-white hover:bg-white/20 disabled:opacity-40"
               >
-                <Undo2 className="h-4 w-4" />
+                <Undo2 className="h-3.5 w-3.5" />
                 <span>Undo</span>
               </button>
               <button
                 type="button"
                 onClick={handleWaterSortHint}
-                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-amber-400 px-3.5 py-2 text-xs font-extrabold text-slate-950 hover:bg-amber-300"
+                className="inline-flex h-8 items-center gap-1 rounded-lg bg-amber-400 px-2.5 text-[11px] font-extrabold text-slate-950 hover:bg-amber-300"
               >
-                <Lightbulb className="h-4 w-4" />
+                <Lightbulb className="h-3.5 w-3.5" />
                 <span>Hint</span>
               </button>
               <button
                 type="button"
                 onClick={handleWaterSortAddTube}
                 disabled={extraTubeUsed}
-                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-extrabold text-white hover:bg-emerald-400 disabled:opacity-40"
+                className="inline-flex h-8 items-center gap-1 rounded-lg bg-emerald-500 px-2.5 text-[11px] font-extrabold text-white hover:bg-emerald-400 disabled:opacity-40"
               >
-                <Plus className="h-4 w-4" />
+                <Plus className="h-3.5 w-3.5" />
                 <span>+1 Tube</span>
               </button>
               <button
                 type="button"
                 onClick={() => initLevelBoard(currentLevel)}
-                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-white/10 px-3.5 py-2 text-xs font-bold text-white hover:bg-white/20"
+                className="inline-flex h-8 items-center gap-1 rounded-lg bg-white/10 px-2.5 text-[11px] font-bold text-white hover:bg-white/20"
               >
-                <RotateCcw className="h-4 w-4" />
+                <RotateCcw className="h-3.5 w-3.5" />
                 <span>Reset</span>
               </button>
             </div>
           </div>
 
-          {/* Glass Test Tubes Grid */}
-          <div className="mt-10 grid grid-cols-3 place-items-center gap-y-10 sm:grid-cols-4 md:grid-cols-5">
+          {/* Compact Glass Test Tubes Grid (Fits on 1 screen without scrolling) */}
+          <div className="mt-4 grid grid-cols-4 place-items-center gap-x-2 gap-y-4 sm:grid-cols-5 sm:gap-y-6">
             {tubes.map((tube, idx) => {
               const isSelected = selectedTubeIdx === idx;
               const isHinted =
@@ -1981,30 +2106,30 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
                   key={idx}
                   type="button"
                   onClick={() => handleTubeClick(idx)}
-                  className={`group relative flex flex-col items-center focus:outline-none transition-transform duration-200 ${
+                  className={`group relative flex flex-col items-center focus:outline-none transition-transform duration-150 ${
                     isSelected || isPouringFrom
-                      ? '-translate-y-5 scale-105'
-                      : 'hover:-translate-y-1.5'
+                      ? '-translate-y-2.5 scale-105'
+                      : 'hover:-translate-y-1'
                   }`}
                 >
                   {/* Completed Star Badge */}
                   {complete && (
-                    <span className=" -top-7 absolute rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-black text-slate-950 shadow-sm">
-                      ★ DONE
+                    <span className="-top-4 absolute rounded-full bg-amber-400 px-1.5 py-0.2 text-[9px] font-black text-slate-950 shadow-2xs">
+                      ★
                     </span>
                   )}
 
                   {/* Pouring Stream Effect */}
                   {isPouringTo && pouringAnim && (
                     <div
-                      className="-top-8 absolute h-10 w-2 animate-pulse rounded-full"
+                      className="-top-5 absolute h-6 w-1.5 animate-pulse rounded-full"
                       style={{ backgroundColor: pouringAnim.color }}
                     />
                   )}
 
                   {/* Flared Glass Tube Lip */}
                   <div
-                    className={`h-2.5 w-16 rounded-full border-2 transition-colors ${
+                    className={`h-1.5 w-11 sm:h-2 sm:w-13 rounded-full border transition-colors ${
                       isSelected
                         ? 'border-amber-300 bg-amber-200/40'
                         : isHinted
@@ -2013,20 +2138,20 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
                     }`}
                   />
 
-                  {/* Glass Tube Body */}
+                  {/* Compact Glass Tube Body */}
                   <div
-                    className={`relative flex h-44 w-14 flex-col-reverse overflow-hidden rounded-b-[28px] border-[3px] bg-[#180C29]/90 p-1 transition-all ${
+                    className={`relative flex h-24 w-9 sm:h-32 sm:w-11 flex-col-reverse overflow-hidden rounded-b-[20px] border-2 bg-[#180C29]/90 p-0.5 transition-all ${
                       isSelected
-                        ? 'border-amber-300 shadow-[0_0_20px_rgba(250,204,21,0.55)]'
+                        ? 'border-amber-300 shadow-[0_0_14px_rgba(250,204,21,0.55)]'
                         : isHinted
-                          ? 'border-emerald-300 shadow-[0_0_18px_rgba(52,211,153,0.5)]'
+                          ? 'border-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.5)]'
                           : complete
                             ? 'border-emerald-400'
                             : 'border-white/80'
                     }`}
                   >
                     {/* Glass Vertical Highlight Reflection */}
-                    <div className="pointer-events-none absolute top-2 bottom-4 left-1.5 z-10 w-1.5 rounded-full bg-white/25" />
+                    <div className="pointer-events-none absolute top-1.5 bottom-3 left-1 z-10 w-1 rounded-full bg-white/25" />
 
                     {/* Liquid Layers (bottom to top) */}
                     {tube.map((colorId, layerIdx) => {
@@ -2038,8 +2163,8 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
                       return (
                         <div
                           key={layerIdx}
-                          className={`relative w-full transition-all duration-200 ${
-                            isBottom ? 'rounded-b-[22px]' : ''
+                          className={`relative w-full transition-all duration-150 ${
+                            isBottom ? 'rounded-b-[16px]' : ''
                           }`}
                           style={{
                             height: '25%',
@@ -2048,7 +2173,7 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
                         >
                           {isTop && (
                             <div
-                              className="h-1.5 w-full rounded-full opacity-80"
+                              className="h-1 w-full rounded-full opacity-80"
                               style={{ backgroundColor: cObj.topHex }}
                             />
                           )}
@@ -2064,36 +2189,54 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
       )}
 
       {/* ==================================================================== */}
-      {/* 2. WORD FINDER BOARD (Crossword Grid + Letter Wheel)                 */}
+      {/* 2. WORD FINDER BOARD (Compact Grid + Target Word Pills + Wheel)      */}
       {/* ==================================================================== */}
       {gameId === 'word_finder' && (
-        <div className="rounded-[32px] bg-[#7E4798] p-5 text-white shadow-xl sm:p-8">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/15 pb-3">
+        <div className="rounded-3xl bg-[#7E4798] p-3.5 text-white shadow-lg sm:p-5">
+          <div className="flex items-center justify-between gap-2 border-b border-white/15 pb-2">
             <div>
               <span className="text-xs font-extrabold tracking-wider text-amber-300 uppercase">
-                WORD FINDER · LEVEL {currentLevel}
+                WORD FINDER · LV.{currentLevel}
               </span>
-              <p className="text-xs text-purple-100">
-                Words Found: <strong>{solvedWords.length}</strong> /{' '}
-                {wfSpec.words.length} · Bonus Words: {foundBonusWords.length}
-              </p>
+              <span className="ml-2 text-[11px] text-purple-100">
+                Words: <strong>{solvedWords.length}/{wfSpec.words.length}</strong> · Bonus: {foundBonusWords.length}
+              </span>
             </div>
             <button
               type="button"
               onClick={() => initLevelBoard(currentLevel)}
-              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-white/15 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/25"
+              className="inline-flex h-7 items-center gap-1 rounded-lg bg-white/15 px-2.5 text-[11px] font-bold text-white hover:bg-white/25"
             >
-              <RotateCcw className="h-3.5 w-3.5" />
-              <span>Reset Level</span>
+              <RotateCcw className="h-3 w-3" />
+              <span>Reset</span>
             </button>
           </div>
 
-          {/* Top Crossword Grid */}
-          <div className="my-6 flex justify-center overflow-x-auto py-2">
+          {/* Target Words Status Pills (Shows exact word lengths clearly) */}
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5">
+            {wfSpec.words.map((wp) => {
+              const done = solvedWords.includes(wp.word);
+              return (
+                <span
+                  key={wp.word}
+                  className={`rounded-lg px-2 py-0.5 font-mono text-[11px] font-black tracking-widest ${
+                    done
+                      ? 'bg-[#68CC35] text-[#194D14]'
+                      : 'bg-white/15 text-white'
+                  }`}
+                >
+                  {done ? `${wp.word} ✓` : wp.word.split('').map(() => '_').join(' ')}
+                </span>
+              );
+            })}
+          </div>
+
+          {/* Compact Top Crossword Grid */}
+          <div className="my-2.5 flex justify-center">
             <div
-              className="inline-grid gap-2"
+              className="inline-grid gap-1 sm:gap-1.5"
               style={{
-                gridTemplateColumns: `repeat(${crosswordBounds.cols}, minmax(40px, 48px))`,
+                gridTemplateColumns: `repeat(${crosswordBounds.cols}, minmax(26px, 34px))`,
               }}
             >
               {Array.from({ length: crosswordBounds.rows }).map((_, r) =>
@@ -2101,7 +2244,7 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
                   const key = `${r},${c}`;
                   const cell = crosswordBounds.cellMap.get(key);
                   if (!cell) {
-                    return <div key={key} className="h-11 w-11 sm:h-12 sm:w-12" />;
+                    return <div key={key} className="h-7 w-7 sm:h-8 sm:w-8" />;
                   }
                   const isSolved = cell.words.some((w) => solvedWords.includes(w));
                   const isHintRevealed = revealedCells.includes(key);
@@ -2110,9 +2253,9 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
                   return (
                     <div
                       key={key}
-                      className={`flex h-11 w-11 items-center justify-center rounded-xl font-display text-xl font-black shadow-sm transition-all sm:h-12 sm:w-12 ${
+                      className={`flex h-7 w-7 items-center justify-center rounded-lg font-display text-sm font-black shadow-2xs transition-all sm:h-8 sm:w-8 sm:text-base ${
                         showChar
-                          ? 'bg-[#68CC35] text-[#194D14] scale-100'
+                          ? 'bg-[#68CC35] text-[#194D14]'
                           : 'bg-white text-transparent'
                       }`}
                     >
@@ -2124,18 +2267,18 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
             </div>
           </div>
 
-          {/* Middle Row: Shuffle Button + Yellow Word Preview Pill + Hint Button */}
-          <div className="mx-auto flex max-w-md items-center justify-between gap-4 px-2">
+          {/* Compact Middle Row: Shuffle + Yellow Word Preview + Hint */}
+          <div className="mx-auto flex max-w-sm items-center justify-between gap-2 px-1">
             <button
               type="button"
               onClick={handleShuffleWheel}
               title="Shuffle Letters"
-              className="flex h-13 w-13 items-center justify-center rounded-full bg-[#DA6295] text-white shadow-md transition-transform hover:scale-105 active:scale-95"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-[#DA6295] text-white shadow-sm active:scale-95"
             >
-              <Shuffle className="h-6 w-6" />
+              <Shuffle className="h-4 w-4" />
             </button>
 
-            <div className="flex min-h-[44px] min-w-[140px] items-center justify-center rounded-xl bg-[#F5C23B] px-5 py-2 font-display text-xl font-black tracking-wider text-[#2B2133] shadow-md">
+            <div className="flex h-9 min-w-[120px] items-center justify-center rounded-xl bg-[#F5C23B] px-4 font-display text-sm font-black tracking-wider text-[#2B2133] shadow-sm sm:text-base">
               {currentFormedWord || 'TAP LETTERS'}
             </div>
 
@@ -2144,19 +2287,18 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
               onClick={handleWordFinderHint}
               disabled={hintsLeft <= 0}
               title="Reveal a Letter Hint"
-              className="relative flex h-13 w-13 items-center justify-center rounded-full bg-[#DA6295] text-white shadow-md transition-transform hover:scale-105 active:scale-95 disabled:opacity-45"
+              className="relative flex h-9 w-9 items-center justify-center rounded-full bg-[#DA6295] text-white shadow-sm active:scale-95 disabled:opacity-45"
             >
-              <Lightbulb className="h-6 w-6" />
-              <span className="-right-1 -bottom-1 absolute flex h-6 w-6 items-center justify-center rounded-full bg-white text-xs font-black text-slate-900 shadow-xs">
+              <Lightbulb className="h-4 w-4" />
+              <span className="-right-1 -bottom-1 absolute flex h-4 w-4 items-center justify-center rounded-full bg-white text-[10px] font-black text-slate-900">
                 {hintsLeft}
               </span>
             </button>
           </div>
 
-          {/* Circular Letter Wheel */}
-          <div className="mt-6 flex flex-col items-center">
-            <div className="relative h-64 w-64 rounded-full bg-[#C98CC9]/45 shadow-inner">
-              {/* SVG Connecting Lines between selected wheel nodes */}
+          {/* Compact Circular Letter Wheel (168px diameter — fits mobile screen without scrolling) */}
+          <div className="mt-2.5 flex flex-col items-center">
+            <div className="relative h-42 w-42 rounded-full bg-[#C98CC9]/45 shadow-inner">
               <svg className="pointer-events-none absolute inset-0 h-full w-full">
                 {selectedWheelIndices.length > 1 && (
                   <polyline
@@ -2165,26 +2307,25 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
                         const posIdx = wheelOrder.indexOf(origIdx);
                         const angle =
                           (posIdx / wheelOrder.length) * Math.PI * 2 - Math.PI / 2;
-                        const cx = 128 + Math.cos(angle) * 82;
-                        const cy = 128 + Math.sin(angle) * 82;
+                        const cx = 84 + Math.cos(angle) * 56;
+                        const cy = 84 + Math.sin(angle) * 56;
                         return `${cx},${cy}`;
                       })
                       .join(' ')}
                     fill="none"
                     stroke="#F5C23B"
-                    strokeWidth="10"
+                    strokeWidth="7"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   />
                 )}
               </svg>
 
-              {/* Circular Letter Buttons */}
               {wheelOrder.map((origIdx, posIdx) => {
                 const angle =
                   (posIdx / wheelOrder.length) * Math.PI * 2 - Math.PI / 2;
-                const x = 128 + Math.cos(angle) * 82;
-                const y = 128 + Math.sin(angle) * 82;
+                const x = 84 + Math.cos(angle) * 56;
+                const y = 84 + Math.sin(angle) * 56;
                 const selected = selectedWheelIndices.includes(origIdx);
 
                 return (
@@ -2193,13 +2334,13 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
                     type="button"
                     onClick={() => handleToggleWheelLetter(origIdx)}
                     style={{
-                      left: `${x - 28}px`,
-                      top: `${y - 28}px`,
+                      left: `${x - 20}px`,
+                      top: `${y - 20}px`,
                     }}
-                    className={`absolute flex h-14 w-14 items-center justify-center rounded-full font-display text-2xl font-black shadow-md transition-transform ${
+                    className={`absolute flex h-10 w-10 items-center justify-center rounded-full font-display text-lg font-black shadow-sm transition-transform ${
                       selected
-                        ? 'scale-110 bg-[#F5C23B] text-[#2B2133] ring-4 ring-white'
-                        : 'bg-white/90 text-[#2B2133] hover:scale-105'
+                        ? 'scale-110 bg-[#F5C23B] text-[#2B2133] ring-2 ring-white'
+                        : 'bg-white/95 text-[#2B2133] hover:scale-105'
                     }`}
                   >
                     {wfSpec.letters[origIdx]}
@@ -2208,21 +2349,21 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
               })}
             </div>
 
-            {/* Submit Word & Clear Buttons */}
-            <div className="mt-5 flex items-center gap-3">
+            {/* Compact Submit Word & Clear Buttons */}
+            <div className="mt-2.5 flex items-center gap-2.5">
               <button
                 type="button"
                 onClick={() => setSelectedWheelIndices([])}
                 disabled={selectedWheelIndices.length === 0}
-                className="min-h-[44px] rounded-2xl bg-white/15 px-5 py-2.5 text-xs font-extrabold text-white hover:bg-white/25 disabled:opacity-40"
+                className="h-9 rounded-xl bg-white/15 px-4 text-xs font-extrabold text-white hover:bg-white/25 disabled:opacity-40"
               >
-                Clear Word
+                Clear
               </button>
               <button
                 type="button"
                 onClick={handleSubmitWordFinder}
                 disabled={selectedWheelIndices.length < 3}
-                className="min-h-[44px] rounded-2xl bg-[#68CC35] px-6 py-2.5 text-xs font-extrabold text-[#194D14] shadow-md hover:bg-lime-400 disabled:opacity-40"
+                className="h-9 rounded-xl bg-[#68CC35] px-5 text-xs font-extrabold text-[#194D14] shadow-sm hover:bg-lime-400 disabled:opacity-40"
               >
                 Check Word ({currentFormedWord.length})
               </button>
@@ -2232,51 +2373,50 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
       )}
 
       {/* ==================================================================== */}
-      {/* 3. 2048 / 2028 NUMBER MERGE PUZZLE                                   */}
+      {/* 3. 2048 / 2028 NUMBER MERGE PUZZLE (Compact Single-Screen Layout)    */}
       {/* ==================================================================== */}
       {gameId === 'game_2048' && (
-        <div className="rounded-[32px] border border-amber-200 bg-[#FAF8EF] p-5 shadow-md sm:p-8">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#F5B800] font-display text-lg font-black text-white shadow-sm">
+        <div className="rounded-3xl border border-amber-200 bg-[#FAF8EF] p-3.5 shadow-md sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#F5B800] font-display text-sm font-black text-white shadow-2xs">
                 2048
               </div>
               <div>
-                <h2 className="font-display text-xl font-extrabold text-[#776E65]">
-                  Level {currentLevel} Goal: Reach{' '}
-                  <span className="rounded-lg bg-[#F5B800] px-2 py-0.5 text-white">
+                <h2 className="font-display text-sm font-extrabold text-[#776E65] sm:text-base">
+                  Lv.{currentLevel} Goal: Reach{' '}
+                  <span className="rounded-md bg-[#F5B800] px-1.5 py-0.5 text-white">
                     {target2048}
-                  </span>{' '}
-                  Tile
+                  </span>
                 </h2>
-                <p className="text-xs font-semibold text-[#776E65]/80">
-                  Swipe on mobile, use Arrow Keys / WASD, or tap the directional buttons below!
+                <p className="text-[11px] font-semibold text-[#776E65]/80">
+                  Swipe board or tap arrows
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 onClick={handle2048Undo}
                 disabled={history2048.length === 0}
-                className="inline-flex min-h-[42px] items-center gap-1.5 rounded-xl bg-[#8F7A66] px-4 py-2 text-xs font-extrabold text-white hover:bg-[#776E65] disabled:opacity-40"
+                className="inline-flex h-8 items-center gap-1 rounded-xl bg-[#8F7A66] px-3 text-xs font-extrabold text-white hover:bg-[#776E65] disabled:opacity-40"
               >
-                <Undo2 className="h-4 w-4" />
+                <Undo2 className="h-3.5 w-3.5" />
                 <span>Undo</span>
               </button>
               <button
                 type="button"
                 onClick={() => initLevelBoard(currentLevel)}
-                className="inline-flex min-h-[42px] items-center gap-1.5 rounded-xl bg-[#8F7A66] px-4 py-2 text-xs font-extrabold text-white hover:bg-[#776E65]"
+                className="inline-flex h-8 items-center gap-1 rounded-xl bg-[#8F7A66] px-3 text-xs font-extrabold text-white hover:bg-[#776E65]"
               >
-                <RotateCcw className="h-4 w-4" />
-                <span>New Board</span>
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Reset</span>
               </button>
             </div>
           </div>
 
-          {/* 4x4 2048 Board with Touch Swipe Support */}
+          {/* Compact 4x4 2048 Board with Touch Swipe Support */}
           <div
             onTouchStart={(e) => {
               const t = e.touches[0];
@@ -2288,21 +2428,21 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
               const dx = t.clientX - touchStartRef.current.x;
               const dy = t.clientY - touchStartRef.current.y;
               touchStartRef.current = null;
-              if (Math.abs(dx) < 24 && Math.abs(dy) < 24) return;
+              if (Math.abs(dx) < 20 && Math.abs(dy) < 20) return;
               if (Math.abs(dx) > Math.abs(dy)) {
                 handle2048Move(dx > 0 ? 'right' : 'left');
               } else {
                 handle2048Move(dy > 0 ? 'down' : 'up');
               }
             }}
-            className="mx-auto mt-6 max-w-[360px] rounded-3xl bg-[#BBADA0] p-3.5 shadow-inner select-none"
+            className="mx-auto mt-3 max-w-[240px] sm:max-w-[280px] rounded-2xl bg-[#BBADA0] p-2.5 shadow-inner select-none"
           >
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-4 gap-2">
               {grid2048.map((row, rIdx) =>
                 row.map((val, cIdx) => (
                   <div
                     key={`${rIdx}-${cIdx}`}
-                    className={`flex aspect-square items-center justify-center rounded-2xl font-display text-2xl font-black transition-all duration-150 sm:text-3xl ${get2048TileStyle(
+                    className={`flex aspect-square items-center justify-center rounded-xl font-display text-lg font-black transition-all duration-150 sm:text-2xl ${get2048TileStyle(
                       val
                     )}`}
                   >
@@ -2313,153 +2453,148 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
             </div>
           </div>
 
-          {/* On-Screen Directional Pad for Easy One-Hand Phone/Mouse Play */}
-          <div className="mt-6 flex flex-col items-center gap-2">
+          {/* Compact On-Screen Directional Controls */}
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => handle2048Move('left')}
+              className="flex h-9 w-12 items-center justify-center rounded-xl bg-[#8F7A66] text-white shadow-2xs active:scale-95"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
             <button
               type="button"
               onClick={() => handle2048Move('up')}
-              className="flex h-12 w-16 items-center justify-center rounded-2xl bg-[#8F7A66] text-white shadow-sm hover:bg-[#776E65] active:scale-95"
+              className="flex h-9 w-12 items-center justify-center rounded-xl bg-[#8F7A66] text-white shadow-2xs active:scale-95"
             >
-              <ArrowUp className="h-6 w-6" />
+              <ArrowUp className="h-4 w-4" />
             </button>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => handle2048Move('left')}
-                className="flex h-12 w-16 items-center justify-center rounded-2xl bg-[#8F7A66] text-white shadow-sm hover:bg-[#776E65] active:scale-95"
-              >
-                <ArrowLeft className="h-6 w-6" />
-              </button>
-              <button
-                type="button"
-                onClick={() => handle2048Move('down')}
-                className="flex h-12 w-16 items-center justify-center rounded-2xl bg-[#8F7A66] text-white shadow-sm hover:bg-[#776E65] active:scale-95"
-              >
-                <ArrowDown className="h-6 w-6" />
-              </button>
-              <button
-                type="button"
-                onClick={() => handle2048Move('right')}
-                className="flex h-12 w-16 items-center justify-center rounded-2xl bg-[#8F7A66] text-white shadow-sm hover:bg-[#776E65] active:scale-95"
-              >
-                <ArrowRight className="h-6 w-6" />
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => handle2048Move('down')}
+              className="flex h-9 w-12 items-center justify-center rounded-xl bg-[#8F7A66] text-white shadow-2xs active:scale-95"
+            >
+              <ArrowDown className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => handle2048Move('right')}
+              className="flex h-9 w-12 items-center justify-center rounded-xl bg-[#8F7A66] text-white shadow-2xs active:scale-95"
+            >
+              <ArrowRight className="h-4 w-4" />
+            </button>
           </div>
         </div>
       )}
 
       {/* ==================================================================== */}
-      {/* 4. MAHJONG SOLITAIRE 3D LAYERED BOARD                                */}
+      {/* 4. MAHJONG SOLITAIRE (Compact Mobile-Fit 3D Tiles — Zero Sliding)    */}
       {/* ==================================================================== */}
       {gameId === 'mahjong_solitaire' && (
-        <div className="rounded-[32px] bg-[#064E27] p-5 text-white shadow-xl sm:p-8">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/15 pb-4">
+        <div className="rounded-3xl bg-[#064E27] p-3.5 text-white shadow-lg sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/15 pb-2.5">
             <div>
               <span className="text-xs font-extrabold tracking-wider text-amber-300 uppercase">
-                MAHJONG SOLITAIRE · LEVEL {currentLevel} · COMBO ×{mahjongCombo}
+                MAHJONG · LV.{currentLevel} · ×{mahjongCombo}
               </span>
-              <p className="mt-0.5 text-xs text-emerald-100">
-                Match pairs of identical free tiles (unblocked on top and open on left or right). Remaining:{' '}
-                <strong>{mahjongTiles.filter((t) => !t.removed).length}</strong> tiles
-              </p>
+              <span className="ml-2 text-[11px] text-emerald-100">
+                Left: <strong>{mahjongTiles.filter((t) => !t.removed).length}</strong>
+              </span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
               <button
                 type="button"
                 onClick={() => setHighlightFreeTiles((v) => !v)}
-                className={`min-h-[38px] rounded-xl px-3 py-1.5 text-xs font-bold ${
+                className={`h-7 rounded-lg px-2 text-[11px] font-bold ${
                   highlightFreeTiles
                     ? 'bg-emerald-400 text-slate-950'
                     : 'bg-white/10 text-white'
                 }`}
               >
-                {highlightFreeTiles ? 'Free Tiles Highlighted' : 'Highlight Free'}
+                {highlightFreeTiles ? 'Free ON' : 'Free OFF'}
               </button>
               <button
                 type="button"
                 onClick={handleMahjongHint}
-                className="inline-flex min-h-[38px] items-center gap-1 rounded-xl bg-amber-400 px-3 py-1.5 text-xs font-extrabold text-slate-950 hover:bg-amber-300"
+                className="inline-flex h-7 items-center gap-1 rounded-lg bg-amber-400 px-2.5 text-[11px] font-extrabold text-slate-950 hover:bg-amber-300"
               >
-                <Lightbulb className="h-4 w-4" />
+                <Lightbulb className="h-3.5 w-3.5" />
                 <span>Hint</span>
               </button>
               <button
                 type="button"
                 onClick={handleMahjongShuffle}
-                className="inline-flex min-h-[38px] items-center gap-1 rounded-xl bg-white/15 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/25"
+                className="inline-flex h-7 items-center gap-1 rounded-lg bg-white/15 px-2.5 text-[11px] font-bold text-white hover:bg-white/25"
               >
-                <Shuffle className="h-4 w-4" />
+                <Shuffle className="h-3.5 w-3.5" />
                 <span>Shuffle</span>
               </button>
               <button
                 type="button"
                 onClick={handleMahjongUndo}
                 disabled={mahjongHistory.length === 0}
-                className="inline-flex min-h-[38px] items-center gap-1 rounded-xl bg-white/15 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/25 disabled:opacity-40"
+                className="inline-flex h-7 items-center gap-1 rounded-lg bg-white/15 px-2.5 text-[11px] font-bold text-white hover:bg-white/25 disabled:opacity-40"
               >
-                <Undo2 className="h-4 w-4" />
+                <Undo2 className="h-3.5 w-3.5" />
                 <span>Undo</span>
               </button>
             </div>
           </div>
 
-          {/* 3D Layered Mahjong Felt Table */}
-          <div className="relative mx-auto my-6 flex min-h-[390px] items-center justify-center overflow-x-auto py-4">
-            <div className="relative h-[350px] w-[360px] sm:h-[380px] sm:w-[460px]">
-              {[0, 1, 2].map((layer) =>
-                mahjongTiles
-                  .filter((t) => !t.removed && t.layer === layer)
-                  .map((tile) => {
-                    const isFree = isMahjongTileFree(tile, mahjongTiles);
-                    const isSelected = selectedMahjongUid === tile.uid;
-                    const isHinted =
-                      hintMahjongUids &&
-                      (hintMahjongUids[0] === tile.uid ||
-                        hintMahjongUids[1] === tile.uid);
+          {/* Responsive Mobile-Fit 3D Mahjong Board (No Horizontal or Vertical Scrolling) */}
+          <div className="relative mx-auto mt-3 h-[230px] w-full max-w-[310px] sm:h-[290px] sm:max-w-[420px]">
+            {[0, 1, 2].map((layer) =>
+              mahjongTiles
+                .filter((t) => !t.removed && t.layer === layer)
+                .map((tile) => {
+                  const isFree = isMahjongTileFree(tile, mahjongTiles);
+                  const isSelected = selectedMahjongUid === tile.uid;
+                  const isHinted =
+                    hintMahjongUids &&
+                    (hintMahjongUids[0] === tile.uid ||
+                      hintMahjongUids[1] === tile.uid);
 
-                    // Position math with 3D layer offset
-                    const leftPx = tile.col * 68 - layer * 6 + 16;
-                    const topPx = tile.row * 86 - layer * 8 + 16;
+                  // Percentage position math so 6 cols × 4 rows always fit 100% inside mobile screen width
+                  const leftPct = (tile.col / 6) * 84 + 3;
+                  const topPct = (tile.row / 4) * 76 + 4;
 
-                    return (
-                      <button
-                        key={tile.uid}
-                        type="button"
-                        onClick={() => handleMahjongTileClick(tile)}
-                        style={{
-                          left: `${leftPx}px`,
-                          top: `${topPx}px`,
-                          zIndex: layer * 10 + tile.row,
-                        }}
-                        className={`absolute flex h-20 w-15 flex-col items-center justify-between rounded-xl border-r-4 border-b-[6px] p-1.5 transition-all duration-150 select-none ${
-                          isSelected
-                            ? '-translate-y-2 border-amber-500 bg-amber-50 ring-3 ring-amber-300 shadow-xl'
-                            : isHinted
-                              ? '-translate-y-1.5 border-emerald-500 bg-emerald-50 ring-3 ring-emerald-300 shadow-lg'
-                              : !isFree && highlightFreeTiles
-                                ? 'border-[#074221] bg-[#D6D1C4] opacity-65'
-                                : 'border-[#0D7A3E] bg-[#FFFDF6] hover:-translate-y-1 shadow-md'
-                        }`}
+                  return (
+                    <button
+                      key={tile.uid}
+                      type="button"
+                      onClick={() => handleMahjongTileClick(tile)}
+                      style={{
+                        left: `calc(${leftPct}% - ${layer * 3}px)`,
+                        top: `calc(${topPct}% - ${layer * 4}px)`,
+                        zIndex: layer * 10 + tile.row,
+                      }}
+                      className={`absolute flex h-12 w-10 sm:h-15 sm:w-12 flex-col items-center justify-between rounded-lg border-r-[3px] border-b-[4px] p-1 transition-all duration-150 select-none ${
+                        isSelected
+                          ? '-translate-y-1.5 border-amber-500 bg-amber-50 ring-2 ring-amber-300 shadow-lg'
+                          : isHinted
+                            ? '-translate-y-1 border-emerald-500 bg-emerald-50 ring-2 ring-emerald-300 shadow-md'
+                            : !isFree && highlightFreeTiles
+                              ? 'border-[#074221] bg-[#D6D1C4] opacity-60'
+                              : 'border-[#0D7A3E] bg-[#FFFDF6] hover:-translate-y-0.5 shadow-sm'
+                      }`}
+                    >
+                      <span className="self-start text-[7px] font-bold leading-none text-slate-400">
+                        L{layer + 1}
+                      </span>
+                      <span
+                        className="font-serif text-base sm:text-xl font-black leading-none"
+                        style={{ color: tile.kind.color }}
                       >
-                        <span className="self-start text-[9px] font-bold text-slate-400">
-                          L{layer + 1}
-                        </span>
-                        <span
-                          className="font-serif text-2xl font-black leading-none"
-                          style={{ color: tile.kind.color }}
-                        >
-                          {tile.kind.symbol}
-                        </span>
-                        <span className="text-[9px] font-extrabold text-slate-600">
-                          {tile.kind.subLabel}
-                        </span>
-                      </button>
-                    );
-                  })
-              )}
-            </div>
+                        {tile.kind.symbol}
+                      </span>
+                      <span className="truncate max-w-full text-[7px] sm:text-[8px] font-extrabold leading-none text-slate-600">
+                        {tile.kind.subLabel}
+                      </span>
+                    </button>
+                  );
+                })
+            )}
           </div>
         </div>
       )}

@@ -76,7 +76,7 @@ const QUESTION_TIME_OPTIONS: QuestionTimeOption[] = [10, 15, 20, 30];
 
 function loadSavedUnlockedLevel(gameId: TrojoGameId): number {
   try {
-    const raw = localStorage.getItem(`trojo_puzzle_progress_${gameId}`);
+    const raw = localStorage.getItem(`trojo_unlocked_lvl_${gameId}`);
     if (raw) {
       const parsed = Number(raw);
       if (!Number.isNaN(parsed) && parsed >= 1 && parsed <= 20) {
@@ -156,7 +156,24 @@ export const GameSetupPage: React.FC<GameSetupPageProps> = ({
     [selectedGameId]
   );
 
+  useEffect(() => {
+    if (playerMode === 'solo' && puzzleLevel > unlockedLevel) {
+      setPuzzleLevel(unlockedLevel);
+      if (onSelectLevel) {
+        onSelectLevel(unlockedLevel);
+      }
+    }
+  }, [playerMode, puzzleLevel, unlockedLevel, onSelectLevel]);
+
   const handleSelectPuzzleLevel = (lvl: number) => {
+    if (playerMode === 'solo' && lvl > unlockedLevel) {
+      soundEngine.playBrakeWrong();
+      setErrorMsg(
+        `Level ${lvl} is locked! Complete Level ${unlockedLevel} first to unlock it.`
+      );
+      return;
+    }
+    setErrorMsg(null);
     soundEngine.playClick();
     setPuzzleLevel(lvl);
     if (onSelectLevel) {
@@ -567,7 +584,7 @@ export const GameSetupPage: React.FC<GameSetupPageProps> = ({
                   </span>
                 </div>
 
-                <div className="grid grid-cols-5 gap-2.5 sm:grid-cols-10">
+                <div className="grid grid-cols-5 gap-2 sm:grid-cols-10">
                   {Array.from({ length: 20 }, (_, i) => i + 1).map((lvl) => {
                     const isSelected = puzzleLevel === lvl;
                     const isUnlocked = lvl <= unlockedLevel;
@@ -575,16 +592,22 @@ export const GameSetupPage: React.FC<GameSetupPageProps> = ({
                       <button
                         key={lvl}
                         type="button"
+                        disabled={!isUnlocked}
                         onClick={() => handleSelectPuzzleLevel(lvl)}
-                        className={`flex flex-col items-center justify-center rounded-2xl border-2 py-2.5 transition-all ${
-                          isSelected
+                        title={
+                          isUnlocked
+                            ? `Play Level ${lvl}`
+                            : `Locked — Complete Level ${unlockedLevel} first`
+                        }
+                        className={`flex flex-col items-center justify-center rounded-2xl border-2 py-2 transition-all ${
+                          isSelected && isUnlocked
                             ? 'border-[#2563EB] bg-[#2563EB] text-white shadow-sm scale-105'
                             : isUnlocked
                               ? 'border-emerald-200 bg-emerald-50/70 text-emerald-950 hover:border-emerald-400'
-                              : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300'
+                              : 'cursor-not-allowed border-slate-200 bg-slate-100/80 text-slate-400 opacity-65'
                         }`}
                       >
-                        <span className="font-mono text-sm font-black">{lvl}</span>
+                        <span className="font-mono text-xs font-black">{lvl}</span>
                         {isUnlocked ? (
                           <Star
                             className={`h-3 w-3 ${
@@ -594,7 +617,7 @@ export const GameSetupPage: React.FC<GameSetupPageProps> = ({
                             }`}
                           />
                         ) : (
-                          <Lock className="h-3 w-3 opacity-50" />
+                          <Lock className="h-3 w-3 opacity-60" />
                         )}
                       </button>
                     );

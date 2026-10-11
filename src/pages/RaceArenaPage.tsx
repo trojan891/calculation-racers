@@ -966,25 +966,25 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
   }, [activeGameId, isMultiplayer, roomPlayers, profile.uid]);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-4xl px-2.5 py-2 sm:px-6 sm:py-5">
       {/* Top Game HUD */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-3.5 shadow-2xs">
-        <div className="flex flex-wrap items-center gap-2 text-xs font-extrabold">
-          <span className="rounded-lg bg-sky-100 px-2.5 py-1 text-sky-900">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-2xs sm:px-5 sm:py-3">
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-extrabold sm:gap-2 sm:text-xs">
+          <span className="rounded-lg bg-sky-100 px-2 py-0.5 text-sky-900 sm:px-2.5 sm:py-1">
             {gameInfo.emoji} {gameInfo.name}
           </span>
-          <span className="rounded-lg bg-purple-100 px-2.5 py-1 text-purple-800">
-            {isMultiplayer ? `Room ${roomCode}` : 'Solo Mode'}
+          <span className="rounded-lg bg-purple-100 px-2 py-0.5 text-purple-800 sm:px-2.5 sm:py-1">
+            {isMultiplayer ? `Room ${roomCode}` : 'Solo'}
           </span>
-          <span className="rounded-lg bg-emerald-100 px-2.5 py-1 text-emerald-800">
+          <span className="rounded-lg bg-emerald-100 px-2 py-0.5 text-emerald-800 sm:px-2.5 sm:py-1">
             {DIFFICULTY_LABELS[difficulty]}
           </span>
-          <span className="rounded-lg bg-slate-100 px-2.5 py-1 font-mono text-slate-700 tabular-nums">
-            Round {Math.min(totalQuestions, questionIndex + 1)} / {totalQuestions}
+          <span className="rounded-lg bg-slate-100 px-2 py-0.5 font-mono text-slate-700 tabular-nums sm:px-2.5 sm:py-1">
+            Q{Math.min(totalQuestions, questionIndex + 1)}/{totalQuestions}
           </span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-4 font-mono text-xs tabular-nums">
+        <div className="flex flex-wrap items-center gap-2.5 font-mono text-[11px] tabular-nums sm:gap-4 sm:text-xs">
           <div>
             <span className="text-slate-500">Score: </span>
             <span className="font-extrabold text-purple-700">{score} pts</span>
@@ -996,10 +996,10 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
             </div>
           )}
           <div>
-            <span className="text-slate-500">Accuracy: </span>
+            <span className="text-slate-500">Acc: </span>
             <span className="font-extrabold text-emerald-600">{accuracyPct}%</span>
           </div>
-          <div className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 font-bold text-slate-800">
+          <div className="flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-0.5 font-bold text-slate-800 sm:px-2.5 sm:py-1">
             <Clock className="h-3.5 w-3.5 text-sky-600" />
             <span>{formatDuration(elapsedMs)}</span>
           </div>
@@ -1008,7 +1008,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
 
       {/* Calculation Racer Track OR Multiplayer Scoreboard Strip */}
       {activeGameId === 'calculation_racer' ? (
-        <div className="mt-4">
+        <div className="mt-2 sm:mt-4">
           <RaceTrackCanvas
             racers={trackRacers}
             maxLanes={isMultiplayer ? room?.maxPlayers || 2 : 1}
@@ -1017,7 +1017,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
       ) : (
         isMultiplayer &&
         standings.length > 1 && (
-          <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:mt-4 sm:grid-cols-4">
             {standings.map((p) => {
               const cInfo = CAR_PALETTE[p.carColor] || CAR_PALETTE.blue;
               return (
@@ -1048,10 +1048,10 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
 
       {/* ACTIVE GAME ROUND CARD OR UNIFIED FINAL RESULTS SCREEN */}
       {!raceFinished && currentQuestion ? (
-        <div className="mt-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-xs sm:p-8">
+        <div className="mt-2.5 rounded-3xl border border-slate-200 bg-white p-3.5 shadow-xs sm:mt-4 sm:p-6">
           {/* Synchronized Round Timer Bar */}
-          <div className="mb-5">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs font-bold">
+          <div className="mb-3 sm:mb-4">
+            <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 text-xs font-bold">
               <span className="text-slate-600">
                 {activeGameId === 'iq_relay' && currentQuestion.iqField ? (
                   <span className="inline-flex items-center gap-1.5 rounded-lg bg-orange-100 px-2.5 py-1 text-orange-900">
@@ -1077,7 +1077,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
               </span>
             </div>
 
-            <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
               <div
                 className={`h-full rounded-full transition-all duration-100 ${
                   questionTimeLeft <= 5 ? 'bg-rose-500' : 'bg-sky-500'
@@ -1092,18 +1092,18 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
           {/* GAME-SPECIFIC STAGE DISPLAYS */}
           {/* 1. Word Scramble Letter Tiles + Direct Word Input */}
           {activeGameId === 'word_scramble' && currentQuestion.scrambledLetters && (
-            <div className="mb-6 rounded-2xl border-2 border-orange-200 bg-orange-50/60 p-5 text-center">
+            <div className="mb-4 rounded-2xl border-2 border-orange-200 bg-orange-50/60 p-4 text-center">
               <p className="text-xs font-extrabold uppercase tracking-wider text-orange-800">
                 Unscramble These Letters
               </p>
-              <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+              <div className="mt-2.5 flex flex-wrap items-center justify-center gap-2">
                 {currentQuestion.scrambledLetters
                   .split(/\s+/)
                   .filter(Boolean)
                   .map((letter, idx) => (
                     <span
                       key={idx}
-                      className="inline-flex h-12 w-12 items-center justify-center rounded-2xl border-2 border-orange-300 bg-white font-mono text-xl font-extrabold text-slate-900 shadow-2xs"
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border-2 border-orange-300 bg-white font-mono text-lg font-extrabold text-slate-900 shadow-2xs"
                     >
                       {letter}
                     </span>
@@ -1112,7 +1112,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
 
               <form
                 onSubmit={handleTypedAnswerSubmit}
-                className="mx-auto mt-4 flex max-w-md gap-2"
+                className="mx-auto mt-3 flex max-w-md gap-2"
               >
                 <input
                   type="text"
@@ -1120,14 +1120,14 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
                   onChange={(e) => setTypedAnswer(e.target.value.toUpperCase())}
                   placeholder="Type unscrambled word..."
                   disabled={feedback !== null || submitting}
-                  className="min-h-[44px] flex-1 rounded-xl border-2 border-orange-200 bg-white px-4 py-2 font-mono text-sm font-extrabold uppercase text-slate-900 focus:border-orange-500 focus:outline-none"
+                  className="min-h-[42px] flex-1 rounded-xl border-2 border-orange-200 bg-white px-3.5 py-1.5 font-mono text-sm font-extrabold uppercase text-slate-900 focus:border-orange-500 focus:outline-none"
                 />
                 <button
                   type="submit"
                   disabled={
                     feedback !== null || submitting || !typedAnswer.trim()
                   }
-                  className="min-h-[44px] rounded-xl bg-orange-500 px-5 py-2 text-xs font-extrabold text-white shadow-2xs hover:bg-orange-600 disabled:opacity-40"
+                  className="min-h-[42px] rounded-xl bg-orange-500 px-4 py-1.5 text-xs font-extrabold text-white shadow-2xs hover:bg-orange-600 disabled:opacity-40"
                 >
                   Submit Word
                 </button>
@@ -1137,17 +1137,17 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
 
           {/* 2. Emoji Decode Clue Stage */}
           {activeGameId === 'emoji_decode' && currentQuestion.emojiClue && (
-            <div className="mb-6 rounded-2xl border-2 border-purple-200 bg-purple-50/60 p-5 text-center">
+            <div className="mb-4 rounded-2xl border-2 border-purple-200 bg-purple-50/60 p-4 text-center">
               <p className="text-xs font-extrabold uppercase tracking-wider text-purple-800">
                 Emoji Mystery Clue
               </p>
-              <div className="mt-2 text-4xl sm:text-5xl">
+              <div className="mt-2 text-3xl sm:text-4xl">
                 {currentQuestion.emojiClue}
               </div>
 
               <form
                 onSubmit={handleTypedAnswerSubmit}
-                className="mx-auto mt-4 flex max-w-md gap-2"
+                className="mx-auto mt-3 flex max-w-md gap-2"
               >
                 <input
                   type="text"
@@ -1155,14 +1155,14 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
                   onChange={(e) => setTypedAnswer(e.target.value)}
                   placeholder="Type your decoded answer or pick below..."
                   disabled={feedback !== null || submitting}
-                  className="min-h-[44px] flex-1 rounded-xl border-2 border-purple-200 bg-white px-4 py-2 text-sm font-bold text-slate-900 focus:border-purple-500 focus:outline-none"
+                  className="min-h-[42px] flex-1 rounded-xl border-2 border-purple-200 bg-white px-3.5 py-1.5 text-sm font-bold text-slate-900 focus:border-purple-500 focus:outline-none"
                 />
                 <button
                   type="submit"
                   disabled={
                     feedback !== null || submitting || !typedAnswer.trim()
                   }
-                  className="min-h-[44px] rounded-xl bg-purple-600 px-5 py-2 text-xs font-extrabold text-white shadow-2xs hover:bg-purple-500 disabled:opacity-40"
+                  className="min-h-[42px] rounded-xl bg-purple-600 px-4 py-1.5 text-xs font-extrabold text-white shadow-2xs hover:bg-purple-500 disabled:opacity-40"
                 >
                   Submit
                 </button>
@@ -1172,11 +1172,11 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
 
           {/* 3. IQ Relay Memory Challenge Target */}
           {activeGameId === 'iq_relay' && currentQuestion.memoryTarget && (
-            <div className="mb-5 rounded-2xl border-2 border-sky-200 bg-sky-50/70 p-4 text-center">
+            <div className="mb-4 rounded-2xl border-2 border-sky-200 bg-sky-50/70 p-3.5 text-center">
               <p className="text-xs font-extrabold uppercase tracking-wider text-sky-800">
                 Memory Sequence Target
               </p>
-              <p className="mt-1.5 font-mono text-2xl font-extrabold tracking-widest text-slate-900">
+              <p className="mt-1 font-mono text-xl font-extrabold tracking-widest text-slate-900">
                 {currentQuestion.memoryTarget}
               </p>
             </div>
@@ -1184,7 +1184,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
 
           {/* 4. Cheat Your Friend Bluff Input Stage */}
           {activeGameId === 'cheat_your_friend' && (
-            <div className="mb-5 rounded-2xl border-2 border-purple-200 bg-purple-50/50 p-4">
+            <div className="mb-4 rounded-2xl border-2 border-purple-200 bg-purple-50/50 p-3.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-extrabold uppercase tracking-wider text-purple-900">
                   🎭 Step 1: Plant a Fake Answer to Bluff the Room (+5 Bluff Bonus)
@@ -1204,13 +1204,13 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
                     value={bluffInput}
                     onChange={(e) => setBluffInput(e.target.value)}
                     placeholder="Write a believable fake answer..."
-                    className="min-h-[42px] flex-1 rounded-xl border border-purple-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 focus:border-purple-500 focus:outline-none"
+                    className="min-h-[40px] flex-1 rounded-xl border border-purple-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-900 focus:border-purple-500 focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={() => handleSubmitBluff()}
                     disabled={!bluffInput.trim()}
-                    className="min-h-[42px] rounded-xl bg-purple-600 px-4 py-2 text-xs font-extrabold text-white hover:bg-purple-500 disabled:opacity-40"
+                    className="min-h-[40px] rounded-xl bg-purple-600 px-4 py-1.5 text-xs font-extrabold text-white hover:bg-purple-500 disabled:opacity-40"
                   >
                     Submit Bluff
                   </button>
@@ -1218,7 +1218,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
               )}
 
               {otherPlayerBluffs.length > 0 && (
-                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-purple-200/60 pt-2.5 text-xs">
+                <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-purple-200/60 pt-2 text-xs">
                   <span className="font-extrabold text-purple-800">
                     Room Bluffs:
                   </span>
@@ -1236,14 +1236,14 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
           )}
 
           {/* Question Header & Text */}
-          <div className="flex items-start justify-between gap-4">
-            <h2 className="font-display text-xl font-extrabold leading-snug text-slate-900 sm:text-2xl">
+          <div className="flex items-start justify-between gap-3">
+            <h2 className="font-display text-base font-extrabold leading-snug text-slate-900 sm:text-2xl">
               {currentQuestion.questionText}
             </h2>
             <button
               type="button"
               onClick={() => setReportingQuestion(currentQuestion)}
-              className="flex min-h-[38px] items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
+              className="flex min-h-[34px] items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-600 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
               title="Report an issue with this question"
             >
               <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
@@ -1251,8 +1251,8 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
             </button>
           </div>
 
-          {/* 4 Validated Multiple-Choice Option Buttons */}
-          <div className="mt-6 grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+          {/* 4 Validated Multiple-Choice Option Buttons (2x2 Grid on Mobile for Zero-Scroll Fit) */}
+          <div className="mt-3.5 grid grid-cols-2 gap-2.5 sm:mt-5 sm:gap-3.5">
             {currentQuestion.options.map((optText, idx) => {
               const optionLetters = ['A', 'B', 'C', 'D'];
               const badgeThemes = [
@@ -1287,26 +1287,26 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
                   type="button"
                   disabled={feedback !== null || submitting}
                   onClick={() => handleSelectOption(idx)}
-                  className={`flex min-h-[60px] items-center justify-between gap-4 rounded-2xl border-2 px-5 py-3.5 text-left transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-sky-500 ${btnStyle}`}
+                  className={`flex min-h-[48px] items-center justify-between gap-2 rounded-2xl border-2 px-3 py-2.5 text-left transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-sky-500 sm:min-h-[60px] sm:gap-4 sm:px-5 sm:py-3.5 ${btnStyle}`}
                 >
-                  <div className="flex items-center gap-3.5">
+                  <div className="flex items-center gap-2 sm:gap-3.5 min-w-0">
                     <span
-                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border font-mono text-xs font-bold ${badgeThemes[idx]}`}
+                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border font-mono text-xs font-bold sm:h-8 sm:w-8 sm:rounded-xl ${badgeThemes[idx]}`}
                     >
                       {optionLetters[idx]}
                     </span>
-                    <span className="text-base font-bold leading-snug">
+                    <span className="text-sm font-bold leading-snug sm:text-base break-words">
                       {optText}
                     </span>
                   </div>
 
                   {feedback !== null && idx === feedback.correctOption && (
-                    <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 sm:h-5 sm:w-5" />
                   )}
                   {feedback !== null &&
                     idx === feedback.selectedOption &&
                     !feedback.isCorrect && (
-                      <XCircle className="h-5 w-5 shrink-0 text-rose-600" />
+                      <XCircle className="h-4 w-4 shrink-0 text-rose-600 sm:h-5 sm:w-5" />
                     )}
                 </button>
               );

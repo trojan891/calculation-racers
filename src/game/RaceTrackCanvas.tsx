@@ -69,9 +69,9 @@ export const RaceTrackCanvas: React.FC<RaceTrackCanvasProps> = ({
       const rect = canvas.getBoundingClientRect();
       const width = Math.max(300, rect.width);
       const laneCount = Math.max(1, Math.min(4, Math.max(racers.length, maxLanes)));
-      const laneHeight = laneCount === 1 ? 92 : laneCount === 2 ? 78 : 66;
-      const headerHeight = 34;
-      const height = headerHeight + laneCount * laneHeight + 12;
+      const laneHeight = laneCount === 1 ? 68 : laneCount === 2 ? 58 : 50;
+      const headerHeight = 28;
+      const height = headerHeight + laneCount * laneHeight + 8;
 
       if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
         canvas.width = Math.floor(width * dpr);
@@ -106,7 +106,7 @@ export const RaceTrackCanvas: React.FC<RaceTrackCanvasProps> = ({
         const x = startX + (d / 100) * trackSpan;
         ctx.fillStyle = d === 100 ? '#059669' : d === 0 ? '#0284C7' : '#64748B';
         if (d % 20 === 0 || width > 620) {
-          ctx.fillText(d === 100 ? 'FINISH' : `${d}m`, x, 21);
+          ctx.fillText(d === 100 ? 'FINISH' : `${d}m`, x, 18);
         }
 
         // Vertical grid guide across lanes
@@ -334,8 +334,8 @@ export const RaceTrackCanvas: React.FC<RaceTrackCanvasProps> = ({
   }, [racers, maxLanes]);
 
   const laneCount = Math.max(1, Math.min(4, Math.max(racers.length, maxLanes)));
-  const laneHeight = laneCount === 1 ? 92 : laneCount === 2 ? 78 : 66;
-  const computedHeight = 34 + laneCount * laneHeight + 12;
+  const laneHeight = laneCount === 1 ? 68 : laneCount === 2 ? 58 : 50;
+  const computedHeight = 28 + laneCount * laneHeight + 8;
 
   return (
     <div className="w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs">

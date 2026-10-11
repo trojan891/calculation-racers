@@ -8,15 +8,6 @@ import { GoogleGenAI, Type } from '@google/genai';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
-});
-
 const SUBCATEGORY_FALLBACKS: Record<string, string[]> = {
   math: ['Addition', 'Subtraction', 'Multiplication', 'Division', 'Mixed Operations'],
   gk: ['Geography', 'History', 'Sports', 'Computers', 'General Facts'],
@@ -32,6 +23,23 @@ async function startServer() {
 
   app.post('/api/ai/generate-questions', async (req, res) => {
     try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        res.status(503).json({
+          error: 'GEMINI_API_KEY is not configured on the server.',
+        });
+        return;
+      }
+
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
       const category = String(req.body?.category || 'science');
       const difficulty = String(req.body?.difficulty || 'easy');
       const subcategory = String(req.body?.subcategory || '');
