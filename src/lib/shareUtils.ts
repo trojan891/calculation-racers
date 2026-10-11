@@ -6,10 +6,11 @@ import {
   GameMode,
   QuestionCategory,
   QuestionDifficulty,
+  TROJO_GAME_MAP,
+  TrojoGameId,
 } from '../game/types';
 
-const DEFAULT_DEPLOYED_PUBLIC_URL =
-  'https://ais-pre-b57bbbqsnj7ly6zg3datum-967948510079.asia-east1.run.app';
+const DEFAULT_DEPLOYED_PUBLIC_URL = 'https://calculation-racers.vercel.app';
 
 /**
  * Resolves the real public game URL for social sharing and room invites.
@@ -25,7 +26,8 @@ export function getPublicGameUrl(): string {
     if (
       origin &&
       !origin.includes('localhost') &&
-      !origin.includes('127.0.0.1')
+      !origin.includes('127.0.0.1') &&
+      !origin.includes('.run.app')
     ) {
       return origin.replace(/\/+$/, '');
     }
@@ -33,14 +35,16 @@ export function getPublicGameUrl(): string {
   return DEFAULT_DEPLOYED_PUBLIC_URL;
 }
 
-export function getRoomInviteUrl(roomCode: string): string {
+export function getRoomInviteUrl(roomCode: string, gameId?: TrojoGameId): string {
   const cleanCode = roomCode.trim().toUpperCase();
-  return `${getPublicGameUrl()}/?room=${encodeURIComponent(cleanCode)}`;
+  const base = `${getPublicGameUrl()}/?room=${encodeURIComponent(cleanCode)}`;
+  return gameId ? `${base}&game=${encodeURIComponent(gameId)}` : base;
 }
 
 export interface RoomInviteSharePayload {
   roomCode: string;
   hostNickname: string;
+  gameId?: TrojoGameId;
   category: QuestionCategory;
   difficulty: QuestionDifficulty;
   questionCount: number;
@@ -49,15 +53,16 @@ export interface RoomInviteSharePayload {
 }
 
 export function buildRoomInviteText(payload: RoomInviteSharePayload): string {
-  const catLabel = CATEGORY_LABELS[payload.category];
+  const gameInfo = TROJO_GAME_MAP[payload.gameId || 'calculation_racer'];
   const diffLabel = DIFFICULTY_LABELS[payload.difficulty];
-  const joinUrl = getRoomInviteUrl(payload.roomCode);
-  return `🏎️ Join my Calculation Racer multiplayer room!\n\n🔑 Room Code: ${payload.roomCode}\n📚 Category: ${catLabel} (${diffLabel})\n⚡ Format: ${payload.questionCount} Questions · ${payload.questionTimeLimitSec}s timer\n\n👉 Play now: ${joinUrl}`;
+  const joinUrl = getRoomInviteUrl(payload.roomCode, payload.gameId);
+  return `TROJO — A Fun Nagar 🎮\n\n${gameInfo.emoji} Join my ${gameInfo.name} room (${payload.maxPlayers}P)!\n🔑 Room Code: ${payload.roomCode}\n⚡ Difficulty: ${diffLabel} · ${payload.questionCount} Rounds · ${payload.questionTimeLimitSec}s timer\n\nPlay here: ${joinUrl}`;
 }
 
 export interface ScoreSharePayload {
   nickname: string;
   carColor: CarColor;
+  gameId?: TrojoGameId;
   mode: GameMode;
   category: QuestionCategory;
   difficulty: QuestionDifficulty;
@@ -69,32 +74,20 @@ export interface ScoreSharePayload {
   durationSec: string;
   placement?: number;
   totalPlayers?: number;
+  reactionTitle?: string;
 }
 
 export function buildScoreShareText(payload: ScoreSharePayload): string {
-  const catLabel = CATEGORY_LABELS[payload.category];
-  const diffLabel = DIFFICULTY_LABELS[payload.difficulty];
+  const gameInfo = TROJO_GAME_MAP[payload.gameId || 'calculation_racer'];
   const gameUrl = getPublicGameUrl();
-  const modeText =
-    payload.mode === '2p' || payload.mode === '4p'
-      ? `Multiplayer (#${payload.placement || 1} Place)`
-      : 'Single-Player Race';
 
-  return `🏁 I scored ${payload.score} pts (${payload.correctAnswers}/${payload.totalQuestions} correct · ${payload.accuracy}% accuracy) in ${payload.durationSec}s on Calculation Racer!\n\n🏎️ ${catLabel} · ${diffLabel} · ${modeText}\n🔥 Can you beat my score? Play free: ${gameUrl}`;
+  return `TROJO — A Fun Nagar 🎮\n\nI scored ${payload.score} pts in ${gameInfo.name}!\n\nThink you can beat me? Challenge accepted? 😎\n\nPlay here: ${gameUrl}`;
 }
 
-export function getSocialShareLinks(shareText: string, shareUrl: string) {
+export function getSocialShareLinks(shareText: string, _shareUrl?: string) {
   const encodedText = encodeURIComponent(shareText);
-  const encodedUrl = encodeURIComponent(shareUrl);
-  const textWithoutUrl = encodeURIComponent(
-    shareText.replace(shareUrl, '').trim()
-  );
-
   return {
     whatsapp: `https://wa.me/?text=${encodedText}`,
-    telegram: `https://t.me/share/url?url=${encodedUrl}&text=${textWithoutUrl}`,
-    twitter: `https://twitter.com/intent/tweet?text=${encodedText}`,
-    facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}&quote=${textWithoutUrl}`,
   };
 }
 
@@ -141,120 +134,139 @@ function drawRoundedRect(
 }
 
 /**
- * Generates a clean, vibrant 1080x1350 visual Score Card PNG Data URL & Blob
- * suitable for downloading or sharing on Instagram, WhatsApp, Telegram, X, and Facebook.
+ * Generates a vertical 9:16 (1080x1920) Score Image suitable for Instagram Stories
+ * and WhatsApp sharing using actual TROJO — A Fun Nagar result data.
  */
 export async function generateScoreCardImage(
   payload: ScoreSharePayload
 ): Promise<{ dataUrl: string; blob: Blob | null }> {
   const canvas = document.createElement('canvas');
   canvas.width = 1080;
-  canvas.height = 1350;
+  canvas.height = 1920;
   const ctx = canvas.getContext('2d');
   if (!ctx) {
     return { dataUrl: '', blob: null };
   }
 
+  const gameInfo = TROJO_GAME_MAP[payload.gameId || 'calculation_racer'];
   const palette = CAR_PALETTE[payload.carColor] || CAR_PALETTE.blue;
   const catLabel = CATEGORY_LABELS[payload.category];
   const diffLabel = DIFFICULTY_LABELS[payload.difficulty];
   const publicUrl = getPublicGameUrl();
+  const reaction =
+    payload.reactionTitle ||
+    (payload.accuracy >= 80
+      ? 'BEAST MODE!'
+      : payload.accuracy >= 50
+        ? 'NICE RUN!'
+        : 'NEXT TIME!');
 
-  // 1. Soft Light Pastel Background
-  const bgGrad = ctx.createLinearGradient(0, 0, 1080, 1350);
-  bgGrad.addColorStop(0, '#F0F9FF');
+  // 1. Soft Light Pastel 9:16 Story Background
+  const bgGrad = ctx.createLinearGradient(0, 0, 1080, 1920);
+  bgGrad.addColorStop(0, '#EFF6FF');
   bgGrad.addColorStop(0.5, '#F8FAFC');
-  bgGrad.addColorStop(1, '#F5F3FF');
+  bgGrad.addColorStop(1, '#F3E8FF');
   ctx.fillStyle = bgGrad;
-  ctx.fillRect(0, 0, 1080, 1350);
+  ctx.fillRect(0, 0, 1080, 1920);
 
-  // Decorative top racing stripe
-  ctx.fillStyle = palette.primary;
-  ctx.fillRect(0, 0, 1080, 18);
+  // Decorative top colorful bar
+  ctx.fillStyle = '#0284C7';
+  ctx.fillRect(0, 0, 270, 22);
+  ctx.fillStyle = '#10B981';
+  ctx.fillRect(270, 0, 270, 22);
+  ctx.fillStyle = '#8B5CF6';
+  ctx.fillRect(540, 0, 270, 22);
+  ctx.fillStyle = '#F97316';
+  ctx.fillRect(810, 0, 270, 22);
 
-  // 2. Main Outer Card
-  drawRoundedRect(ctx, 56, 64, 968, 1222, 44);
+  // 2. Main Story Card
+  drawRoundedRect(ctx, 64, 96, 952, 1728, 56);
   ctx.fillStyle = '#FFFFFF';
   ctx.fill();
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 4;
   ctx.strokeStyle = '#E2E8F0';
   ctx.stroke();
 
-  // 3. Header Brand Bar
-  drawRoundedRect(ctx, 104, 112, 872, 110, 28);
+  // 3. TROJO — A Fun Nagar Header Bar
+  drawRoundedRect(ctx, 116, 152, 848, 136, 36);
   ctx.fillStyle = '#F8FAFC';
   ctx.fill();
 
-  drawRoundedRect(ctx, 128, 132, 70, 70, 20);
+  drawRoundedRect(ctx, 148, 178, 84, 84, 24);
   ctx.fillStyle = '#0284C7';
   ctx.fill();
 
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = '800 34px "Plus Jakarta Sans", sans-serif';
+  ctx.font = '800 44px "Outfit", "Plus Jakarta Sans", sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('CR', 163, 179);
+  ctx.fillText('T', 190, 236);
 
   ctx.textAlign = 'left';
   ctx.fillStyle = '#0F172A';
-  ctx.font = '800 36px "Plus Jakarta Sans", sans-serif';
-  ctx.fillText('Calculation Racer', 222, 166);
+  ctx.font = '800 46px "Outfit", "Plus Jakarta Sans", sans-serif';
+  ctx.fillText('TROJO', 256, 214);
 
-  ctx.fillStyle = '#64748B';
-  ctx.font = '600 22px "Inter", sans-serif';
-  ctx.fillText('Multiplayer Brain Racing Game', 222, 198);
+  ctx.fillStyle = '#7C3AED';
+  ctx.font = '800 26px "Plus Jakarta Sans", sans-serif';
+  ctx.fillText('A Fun Nagar', 256, 252);
 
-  // Mode Pill on Right
+  // Game Mode Pill on Right
   const isMulti = payload.mode === '2p' || payload.mode === '4p';
   const modeLabel = isMulti
-    ? `MULTIPLAYER · #${payload.placement || 1}`
-    : 'SINGLE PLAYER';
-  drawRoundedRect(ctx, 680, 140, 268, 54, 18);
+    ? `RANK #${payload.placement || 1}`
+    : 'SOLO RUN';
+  drawRoundedRect(ctx, 690, 188, 240, 64, 22);
   ctx.fillStyle = isMulti ? '#F3E8FF' : '#E0F2FE';
   ctx.fill();
   ctx.fillStyle = isMulti ? '#6D28D9' : '#0369A1';
-  ctx.font = '800 20px "Inter", sans-serif';
+  ctx.font = '800 24px "Plus Jakarta Sans", sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText(modeLabel, 814, 174);
+  ctx.fillText(modeLabel, 810, 229);
 
-  // 4. Player Banner & Score Hero Box
-  drawRoundedRect(ctx, 104, 254, 872, 340, 36);
-  const heroGrad = ctx.createLinearGradient(104, 254, 976, 594);
-  heroGrad.addColorStop(0, '#0284C7');
-  heroGrad.addColorStop(1, '#4F46E5');
-  ctx.fillStyle = heroGrad;
-  ctx.fill();
-
+  // 4. Game Title & Player Badge
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#E0F2FE';
-  ctx.font = '700 24px "Inter", sans-serif';
+  ctx.font = '800 84px sans-serif';
+  ctx.fillText(gameInfo.emoji, 540, 410);
+
+  ctx.fillStyle = '#0F172A';
+  ctx.font = '800 50px "Outfit", "Plus Jakarta Sans", sans-serif';
+  ctx.fillText(gameInfo.name, 540, 485);
+
+  ctx.fillStyle = '#475569';
+  ctx.font = '700 28px "Plus Jakarta Sans", sans-serif';
   ctx.fillText(
-    `RACER: ${payload.nickname.toUpperCase()}  •  ${catLabel.toUpperCase()} (${diffLabel.toUpperCase()})`,
+    `PLAYER: ${payload.nickname.toUpperCase()}  •  ${diffLabel.toUpperCase()}`,
     540,
-    318
+    538
   );
 
+  // 5. Big Bold Score Hero Box
+  drawRoundedRect(ctx, 116, 584, 848, 420, 44);
+  ctx.fillStyle = palette.primary;
+  ctx.fill();
+
+  ctx.fillStyle = '#FEF08A';
+  ctx.font = '800 34px "Outfit", "Plus Jakarta Sans", sans-serif';
+  ctx.fillText(reaction, 540, 662);
+
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = '800 124px "Plus Jakarta Sans", sans-serif';
-  ctx.fillText(`${payload.score}`, 540, 452);
+  ctx.font = '800 168px "Outfit", "Plus Jakarta Sans", sans-serif';
+  ctx.fillText(`${payload.score}`, 540, 845);
 
-  ctx.fillStyle = '#BAE6FD';
-  ctx.font = '800 26px "Inter", sans-serif';
-  ctx.fillText('FINAL RACE SCORE (POINTS)', 540, 500);
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.font = '800 30px "Plus Jakarta Sans", sans-serif';
+  ctx.fillText(
+    payload.gameId === 'iq_relay'
+      ? 'IQ RELAY PERFORMANCE SCORE'
+      : 'FINAL GAME SCORE (POINTS)',
+    540,
+    920
+  );
 
-  // Mini progress track bar inside hero
-  drawRoundedRect(ctx, 184, 530, 712, 26, 13);
-  ctx.fillStyle = 'rgba(255,255,255,0.22)';
-  ctx.fill();
-
-  const fillW = Math.max(36, Math.round((Math.min(100, payload.distance) / 100) * 712));
-  drawRoundedRect(ctx, 184, 530, fillW, 26, 13);
-  ctx.fillStyle = '#34D399';
-  ctx.fill();
-
-  // 5. Four Stat Cards (2x2 Grid)
+  // 6. Four Clean Stat Boxes (2x2 Grid)
   const stats = [
     {
-      label: 'CORRECT ANSWERS',
+      label: 'CORRECT ROUNDS',
       value: `${payload.correctAnswers} / ${payload.totalQuestions}`,
       bg: '#ECFDF5',
       border: '#A7F3D0',
@@ -268,15 +280,19 @@ export async function generateScoreCardImage(
       text: '#0369A1',
     },
     {
-      label: 'RACE TIME',
+      label: 'COMPLETION TIME',
       value: `${payload.durationSec}s`,
-      bg: '#FFFBEB',
-      border: '#FDE68A',
-      text: '#B45309',
+      bg: '#FFF7ED',
+      border: '#FED7AA',
+      text: '#C2410C',
     },
     {
-      label: 'DISTANCE REACHED',
-      value: `${payload.distance}m / 100m`,
+      label:
+        payload.gameId === 'calculation_racer' ? 'RACE DISTANCE' : 'CATEGORY',
+      value:
+        payload.gameId === 'calculation_racer'
+          ? `${payload.distance}m / 100m`
+          : catLabel,
       bg: '#FAF5FF',
       border: '#E9D5FF',
       text: '#6D28D9',
@@ -286,44 +302,44 @@ export async function generateScoreCardImage(
   stats.forEach((st, idx) => {
     const col = idx % 2;
     const row = Math.floor(idx / 2);
-    const x = 104 + col * 452;
-    const y = 634 + row * 204;
-    const w = 420;
-    const h = 176;
+    const x = 116 + col * 440;
+    const y = 1054 + row * 226;
+    const w = 408;
+    const h = 196;
 
-    drawRoundedRect(ctx, x, y, w, h, 28);
+    drawRoundedRect(ctx, x, y, w, h, 32);
     ctx.fillStyle = st.bg;
     ctx.fill();
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 3;
     ctx.strokeStyle = st.border;
     ctx.stroke();
 
     ctx.textAlign = 'left';
     ctx.fillStyle = '#64748B';
-    ctx.font = '700 20px "Inter", sans-serif';
-    ctx.fillText(st.label, x + 32, y + 58);
+    ctx.font = '800 22px "Plus Jakarta Sans", sans-serif';
+    ctx.fillText(st.label, x + 34, y + 66);
 
     ctx.fillStyle = st.text;
-    ctx.font = '800 52px "JetBrains Mono", monospace';
-    ctx.fillText(st.value, x + 32, y + 132);
+    ctx.font =
+      st.value.length > 10
+        ? '800 36px "Plus Jakarta Sans", sans-serif'
+        : '800 54px "JetBrains Mono", monospace';
+    ctx.fillText(st.value, x + 34, y + 146);
   });
 
-  // 6. Challenge Call-To-Action Footer
-  drawRoundedRect(ctx, 104, 1068, 872, 168, 28);
-  ctx.fillStyle = '#F8FAFC';
+  // 7. Challenge Call-To-Action Footer
+  drawRoundedRect(ctx, 116, 1536, 848, 224, 36);
+  ctx.fillStyle = '#0F172A';
   ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = '#E2E8F0';
-  ctx.stroke();
 
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#0F172A';
-  ctx.font = '800 32px "Plus Jakarta Sans", sans-serif';
-  ctx.fillText('Can you beat my score? Race with your brain!', 540, 1128);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = '800 38px "Outfit", "Plus Jakarta Sans", sans-serif';
+  ctx.fillText('Think you can beat me? Challenge accepted? 😎', 540, 1622);
 
-  ctx.fillStyle = '#0284C7';
-  ctx.font = '700 24px "Inter", sans-serif';
-  ctx.fillText(publicUrl, 540, 1178);
+  ctx.fillStyle = '#38BDF8';
+  ctx.font = '700 30px "JetBrains Mono", monospace';
+  ctx.fillText(publicUrl, 540, 1696);
 
   const dataUrl = canvas.toDataURL('image/png');
   const blob = await new Promise<Blob | null>((resolve) =>

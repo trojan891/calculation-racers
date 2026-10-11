@@ -3,8 +3,164 @@ export type QuestionDifficulty = 'easy' | 'medium' | 'hard';
 export type CarColor = 'blue' | 'red' | 'green' | 'purple';
 export type GameMode = 'solo' | '2p' | '4p' | 'timed';
 export type RoomStatus = 'waiting' | 'countdown' | 'racing' | 'finished' | 'abandoned';
-export type QuestionCountOption = 10 | 15 | 20;
+export type QuestionCountOption = 5 | 6 | 8 | 10 | 12 | 15 | 20;
 export type QuestionTimeOption = 10 | 15 | 20 | 30;
+
+export type TrojoGameId =
+  | 'calculation_racer'
+  | 'water_sort'
+  | 'word_finder'
+  | 'game_2048'
+  | 'mahjong_solitaire'
+  // Legacy IDs kept for backward compatibility with older saved records
+  | 'cheat_your_friend'
+  | 'solve_the_puzzle'
+  | 'word_scramble'
+  | 'emoji_decode'
+  | 'quick_quiz'
+  | 'iq_relay';
+
+export type IqRelayField =
+  | 'Numerical Reasoning'
+  | 'Logical Reasoning'
+  | 'Pattern Recognition'
+  | 'Verbal Reasoning'
+  | 'Memory Challenge'
+  | 'Spatial Reasoning'
+  | 'Quick Maths';
+
+export const IQ_RELAY_ALL_FIELDS: IqRelayField[] = [
+  'Numerical Reasoning',
+  'Logical Reasoning',
+  'Pattern Recognition',
+  'Verbal Reasoning',
+  'Memory Challenge',
+  'Spatial Reasoning',
+  'Quick Maths',
+];
+
+export interface TrojoGameCatalogItem {
+  id: TrojoGameId;
+  name: string;
+  tagline: string;
+  shortDescription: string;
+  emoji: string;
+  accentColor: 'blue' | 'green' | 'purple' | 'orange';
+  badgeText: string;
+  supportsSolo: boolean;
+  supportsMultiplayer: boolean;
+  isInteractivePuzzle: boolean;
+  totalLevels: number;
+  defaultQuestionCount: QuestionCountOption;
+  defaultTimeLimitSec: QuestionTimeOption;
+}
+
+export const TROJO_GAMES: TrojoGameCatalogItem[] = [
+  {
+    id: 'calculation_racer',
+    name: 'Calculation Racer',
+    tagline: 'Race with your brain to the 100m finish line!',
+    shortDescription:
+      'Solve fast Math, GK, Science & Current Affairs questions to boost your race car +10m forward.',
+    emoji: '🏎️',
+    accentColor: 'blue',
+    badgeText: '100m Brain Race',
+    supportsSolo: true,
+    supportsMultiplayer: true,
+    isInteractivePuzzle: false,
+    totalLevels: 20,
+    defaultQuestionCount: 10,
+    defaultTimeLimitSec: 20,
+  },
+  {
+    id: 'water_sort',
+    name: 'Water Sort',
+    tagline: 'Pour & sort colorful liquids into matching test tubes!',
+    shortDescription:
+      'Tap glass test tubes to pour matching top liquid layers until every tube holds a single pure color across 20 levels.',
+    emoji: '🧪',
+    accentColor: 'purple',
+    badgeText: 'Liquid Puzzle · 20 Levels',
+    supportsSolo: true,
+    supportsMultiplayer: true,
+    isInteractivePuzzle: true,
+    totalLevels: 20,
+    defaultQuestionCount: 10,
+    defaultTimeLimitSec: 20,
+  },
+  {
+    id: 'word_finder',
+    name: 'Word Finder',
+    tagline: 'Connect letters on the wheel to fill the crossword grid!',
+    shortDescription:
+      'Tap & link letters on the golden wheel to discover intersecting crossword words and bonus words across 20 levels.',
+    emoji: '🔤',
+    accentColor: 'purple',
+    badgeText: 'Crossword Wheel · 20 Levels',
+    supportsSolo: true,
+    supportsMultiplayer: true,
+    isInteractivePuzzle: true,
+    totalLevels: 20,
+    defaultQuestionCount: 10,
+    defaultTimeLimitSec: 20,
+  },
+  {
+    id: 'game_2048',
+    name: '2048 / 2028',
+    tagline: 'Slide & merge number tiles to reach the target tile!',
+    shortDescription:
+      'Swipe or use arrow keys to slide and merge matching power-of-two tiles across 20 progressive level goals.',
+    emoji: '🟨',
+    accentColor: 'orange',
+    badgeText: 'Number Merge · 20 Levels',
+    supportsSolo: true,
+    supportsMultiplayer: true,
+    isInteractivePuzzle: true,
+    totalLevels: 20,
+    defaultQuestionCount: 10,
+    defaultTimeLimitSec: 20,
+  },
+  {
+    id: 'mahjong_solitaire',
+    name: 'Mahjong Solitaire',
+    tagline: 'Match open 3D Mahjong tiles to clear the layered board!',
+    shortDescription:
+      'Pair matching free Dragon, Wind, Bamboo & Circle Mahjong tiles with combo multipliers across 20 classic board layouts.',
+    emoji: '🀄',
+    accentColor: 'green',
+    badgeText: 'Tile Match · 20 Levels',
+    supportsSolo: true,
+    supportsMultiplayer: true,
+    isInteractivePuzzle: true,
+    totalLevels: 20,
+    defaultQuestionCount: 10,
+    defaultTimeLimitSec: 20,
+  },
+];
+
+export const TROJO_GAME_MAP: Record<TrojoGameId, TrojoGameCatalogItem> = {
+  calculation_racer: TROJO_GAMES[0],
+  water_sort: TROJO_GAMES[1],
+  word_finder: TROJO_GAMES[2],
+  game_2048: TROJO_GAMES[3],
+  mahjong_solitaire: TROJO_GAMES[4],
+  // Fallback mappings for legacy records
+  cheat_your_friend: TROJO_GAMES[1],
+  solve_the_puzzle: TROJO_GAMES[3],
+  word_scramble: TROJO_GAMES[2],
+  emoji_decode: TROJO_GAMES[4],
+  quick_quiz: TROJO_GAMES[0],
+  iq_relay: TROJO_GAMES[3],
+};
+
+export function isInteractivePuzzleGame(gameId?: TrojoGameId): boolean {
+  return (
+    gameId === 'water_sort' ||
+    gameId === 'word_finder' ||
+    gameId === 'game_2048' ||
+    gameId === 'mahjong_solitaire'
+  );
+}
 
 export enum OperationType {
   CREATE = 'create',
@@ -34,6 +190,7 @@ export interface PlayerProfile {
 
 export interface QuestionItem {
   id: string;
+  gameId?: TrojoGameId;
   category: QuestionCategory;
   subcategory?: string;
   difficulty: QuestionDifficulty;
@@ -47,6 +204,11 @@ export interface QuestionItem {
   isActive: boolean;
   correctOption?: number;
   explanation?: string;
+  acceptedAnswers?: string[];
+  scrambledLetters?: string;
+  emojiClue?: string;
+  memoryTarget?: string;
+  iqField?: IqRelayField;
   createdAt?: unknown;
   updatedAt?: unknown;
 }
@@ -81,6 +243,8 @@ export interface RoomRecord {
   hostId: string;
   hostNickname: string;
   maxPlayers: 2 | 4;
+  gameId?: TrojoGameId;
+  iqFields?: IqRelayField[];
   category: QuestionCategory;
   subcategories?: string[];
   difficulty: QuestionDifficulty;
@@ -107,6 +271,8 @@ export interface RoomPlayerRecord {
   ready: boolean;
   distance: number;
   score?: number;
+  bluffText?: string;
+  votedOption?: number;
   correctAnswers: number;
   wrongAnswers: number;
   currentQuestionIndex: number;
@@ -131,6 +297,13 @@ export interface AnswerSubmissionRecord {
   createdAt?: unknown;
 }
 
+export interface IqFieldPerformance {
+  field: IqRelayField;
+  correct: number;
+  total: number;
+  avgTimeMs: number;
+}
+
 export interface RaceResultRecord {
   id?: string;
   roomCode: string;
@@ -138,6 +311,7 @@ export interface RaceResultRecord {
   nickname: string;
   carColor: CarColor;
   mode: GameMode;
+  gameId?: TrojoGameId;
   category: QuestionCategory;
   difficulty: QuestionDifficulty;
   placement: number;

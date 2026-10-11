@@ -1,35 +1,39 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
-import React, { useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
-import { doc, getDocs, collection, onSnapshot, query, where } from 'firebase/firestore';
+import React, { Component, ErrorInfo, ReactNode, useEffect, useState } from 'react';
+import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import {
-  Car,
-  ChevronDown,
-  Home,
+  AlertTriangle,
+  Gamepad2,
+  KeyRound,
+  LogIn,
   LogOut,
-  Play,
-  Shield,
+  PlusCircle,
+  ShieldCheck,
   Trophy,
-  User as UserIcon,
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import { auth, db, googleProvider } from './lib/firebase';
+import {
+  auth,
+  BOOTSTRAPPED_ADMIN_EMAIL,
+  googleProvider,
+} from './lib/firebase';
 import {
   CAR_PALETTE,
   GameMode,
+  IQ_RELAY_ALL_FIELDS,
+  IqRelayField,
+  isInteractivePuzzleGame,
   PlayerProfile,
   QuestionCategory,
   QuestionCountOption,
   QuestionDifficulty,
   QuestionItem,
+  QuestionTimeOption,
   RaceResultRecord,
   RoomPlayerRecord,
   RoomRecord,
+  SUBCATEGORIES_BY_CATEGORY,
+  TrojoGameId,
 } from './game/types';
 import {
   checkUserIsAdmin,
@@ -38,217 +42,227 @@ import {
   ensurePlayerProfile,
   fetchActiveQuestions,
   joinMultiplayerRoom,
+  resetMultiplayerRoomForRematch,
   resolveRoomQuestionSequence,
-  seedStarterQuestionsToFirestore,
   selectUniqueQuestionsForPlayer,
 } from './lib/gameService';
-import { SEED_QUESTIONS } from './lib/seedQuestions';
 import { soundEngine } from './lib/sound';
 import { HomePage } from './pages/HomePage';
 import { GameSetupPage } from './pages/GameSetupPage';
 import { JoinRoomPage } from './pages/JoinRoomPage';
-import { LeaderboardPage } from './pages/LeaderboardPage';
 import { RoomLobbyPage } from './pages/RoomLobbyPage';
 import { RaceArenaPage } from './pages/RaceArenaPage';
+import { PuzzleGameArenaPage } from './pages/PuzzleGameArenaPage';
+import { LeaderboardPage } from './pages/LeaderboardPage';
 import { ProfileAndScoresPage } from './pages/ProfileAndScoresPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
 
-type ActiveView =
-  | 'home'
-  | 'setup'
-  | 'join'
-  | 'leaderboard'
-  | 'lobby'
-  | 'race'
-  | 'profile'
-  | 'admin';
+const GUEST_PROFILE_STORAGE_KEY = 'trojo_guest_profile_v1';
+const GUEST_HISTORY_STORAGE_KEY = 'trojo_guest_history_v1';
 
-const DEFAULT_GUEST_PROFILE: PlayerProfile = {
-  uid: 'guest_local_driver',
-  nickname: 'GuestRacer',
-  carColor: 'blue',
-  wins: 0,
-  totalRaces: 0,
-  bestTimeMs: 0,
-  bestScore: 0,
-  totalCorrect: 0,
-  totalWrong: 0,
-  isPublicProfile: false,
-  isBanned: false,
-  banReason: '',
-};
-
-function getInitialInvitedRoomCode(): string {
-  if (typeof window === 'undefined') return '';
+function loadGuestProfile(): PlayerProfile {
   try {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('room') || params.get('code') || '';
-    const cleaned = code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-    return cleaned.length === 6 ? cleaned : '';
+    const raw = localStorage.getItem(GUEST_PROFILE_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as PlayerProfile;
+      if (parsed && parsed.uid && parsed.nickname) {
+        return parsed;
+      }
+    }
   } catch {
-    return '';
+    // ignore storage errors
+  }
+  const randomId = Math.floor(1000 + Math.random() * 9000);
+  const fallback: PlayerProfile = {
+    uid: `guest_${randomId}`,
+    nickname: `Player${randomId}`,
+    carColor: 'blue',
+    wins: 0,
+    totalRaces: 0,
+    bestTimeMs: 0,
+    bestScore: 0,
+    totalCorrect: 0,
+    totalWrong: 0,
+    isPublicProfile: false,
+    isBanned: false,
+    banReason: '',
+  };
+  try {
+    localStorage.setItem(GUEST_PROFILE_STORAGE_KEY, JSON.stringify(fallback));
+  } catch {
+    // ignore storage errors
+  }
+  return fallback;
+}
+
+function saveGuestProfile(profile: PlayerProfile): void {
+  try {
+    localStorage.setItem(GUEST_PROFILE_STORAGE_KEY, JSON.stringify(profile));
+  } catch {
+    // ignore storage errors
   }
 }
 
-export default function App() {
-  const [authUser, setAuthUser] = useState<User | null>(null);
+interface ErrorBoundaryState {
+  hasError: boolean;
+  errorMessage: string;
+}
+
+class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
+  public state: ErrorBoundaryState = {
+    hasError: false,
+    errorMessage: '',
+  };
+
+  public static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return {
+      hasError: true,
+      errorMessage: error.message || 'An unexpected error occurred.',
+    };
+  }
+
+  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Application Error Boundary caught error:', error, errorInfo);
+  }
+
+  public render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-[#F8FAFC] p-6">
+          <div className="max-w-lg rounded-3xl border border-rose-200 bg-white p-8 shadow-lg">
+            <div className="flex items-center gap-3 text-rose-600">
+              <AlertTriangle className="h-6 w-6" />
+              <h1 className="font-display text-xl font-extrabold">
+                Something went wrong
+              </h1>
+            </div>
+            <p className="mt-3 rounded-xl bg-slate-50 p-3 font-mono text-xs text-slate-600 break-all">
+              {this.state.errorMessage}
+            </p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="mt-6 w-full rounded-2xl bg-[#2563EB] py-3 text-sm font-extrabold text-white hover:bg-blue-700"
+            >
+              Reload TROJO
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+type AppView =
+  | 'home'
+  | 'setup'
+  | 'join'
+  | 'lobby'
+  | 'arena'
+  | 'leaderboard'
+  | 'profile'
+  | 'admin';
+
+function getInitials(name: string): string {
+  const cleaned = name.trim();
+  if (!cleaned) return 'RC';
+  const parts = cleaned.split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return cleaned.slice(0, 2).toUpperCase();
+}
+
+export function App() {
+  const [view, setView] = useState<AppView>('home');
+  const [setupViewMode, setSetupViewMode] = useState<'library' | 'configure'>('library');
+  const [setupPlayerMode, setSetupPlayerMode] = useState<'solo' | 'multiplayer'>('solo');
   const [authReady, setAuthReady] = useState(false);
+  const [isGuest, setIsGuest] = useState(true);
+  const [userEmail, setUserEmail] = useState<string>('');
   const [isAdmin, setIsAdmin] = useState(false);
-  const [profile, setProfile] = useState<PlayerProfile>(() => {
-    try {
-      const saved = localStorage.getItem('calc_racer_guest_profile');
-      if (saved) return { ...DEFAULT_GUEST_PROFILE, ...JSON.parse(saved) };
-    } catch {
-      // ignore
-    }
-    return DEFAULT_GUEST_PROFILE;
-  });
+  const [profile, setProfile] = useState<PlayerProfile>(() => loadGuestProfile());
 
-  const [guestResults, setGuestResults] = useState<RaceResultRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem('calc_racer_guest_results');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    return [];
-  });
-
-  const [invitedRoomCode, setInvitedRoomCode] = useState<string>(() =>
-    getInitialInvitedRoomCode()
-  );
-
-  const [view, setView] = useState<ActiveView>(() => {
-    if (typeof window !== 'undefined') {
-      if (
-        window.location.pathname.startsWith('/admin') ||
-        window.location.hash === '#admin'
-      ) {
-        return 'admin';
-      }
-      if (getInitialInvitedRoomCode()) {
-        return 'join';
-      }
-    }
-    return 'home';
-  });
-
-  // Game setup state (Defaults: Mathematics, Easy, 10 questions, 20 seconds, Sound On)
-  const [setupInitialPlayerMode, setSetupInitialPlayerMode] = useState<
-    'solo' | 'multiplayer'
-  >('solo');
-  const [selectedCategory, setSelectedCategory] = useState<QuestionCategory>('math');
-  const [selectedSubcategories, setSelectedSubcategories] = useState<string[]>([]);
-  const [selectedDifficulty, setSelectedDifficulty] =
-    useState<QuestionDifficulty>('easy');
-  const [questionCount, setQuestionCount] = useState<QuestionCountOption>(10);
-  const [questionTimeLimitSec, setQuestionTimeLimitSec] = useState<number>(20);
-  const [activeMode, setActiveMode] = useState<GameMode>('solo');
-  const [raceQuestions, setRaceQuestions] = useState<QuestionItem[]>(
-    SEED_QUESTIONS.slice(0, 10)
-  );
-  const [raceSessionId, setRaceSessionId] = useState<number>(1);
-
-  // Multiplayer room state
-  const [activeRoomCode, setActiveRoomCode] = useState<string>('');
-  const [activeRoom, setActiveRoom] = useState<RoomRecord | null>(null);
-  const [activeRoomPlayers, setActiveRoomPlayers] = useState<RoomPlayerRecord[]>([]);
-
+  // Sound state
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() =>
     soundEngine.isEnabled()
   );
-  const [authBanner, setAuthBanner] = useState<string | null>(null);
-  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
 
-  // Close profile menu when clicking outside
+  // Active Game / Room Config State
+  const [activeRoomCode, setActiveRoomCode] = useState<string | undefined>(undefined);
+  const [activeRoomRecord, setActiveRoomRecord] = useState<RoomRecord | null>(null);
+  const [activeRoomPlayers, setActiveRoomPlayers] = useState<RoomPlayerRecord[]>([]);
+  const [prefillJoinCode, setPrefillJoinCode] = useState<string>('');
+  const [selectedGameId, setSelectedGameId] = useState<TrojoGameId>('calculation_racer');
+  const [selectedLevel, setSelectedLevel] = useState<number>(1);
+  const [selectedIqFields, setSelectedIqFields] = useState<IqRelayField[]>([
+    'Numerical Reasoning',
+    'Logical Reasoning',
+    'Pattern Recognition',
+    'Quick Maths',
+  ]);
+  const [activeMode, setActiveMode] = useState<GameMode>('solo');
+  const [selectedCategory, setSelectedCategory] = useState<QuestionCategory>('math');
+  const [selectedSubcategories, setSelectedSubcategories] = useState<string[]>([
+    SUBCATEGORIES_BY_CATEGORY.math[0],
+  ]);
+  const [selectedDifficulty, setSelectedDifficulty] =
+    useState<QuestionDifficulty>('easy');
+  const [questionCount, setQuestionCount] = useState<QuestionCountOption>(10);
+  const [questionTimeLimitSec, setQuestionTimeLimitSec] =
+    useState<QuestionTimeOption>(20);
+  const [activeQuestions, setActiveQuestions] = useState<QuestionItem[]>([]);
+  const [authBannerError, setAuthBannerError] = useState<string | null>(null);
+
+  // Inspect URL query params (?room=CODE) or pathname (/admin)
   useEffect(() => {
-    const onDocClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setProfileMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
+    const params = new URLSearchParams(window.location.search);
+    const roomParam = params.get('room');
+    const path = window.location.pathname.toLowerCase();
+
+    if (path === '/admin' || params.get('admin') === '1') {
+      setView('admin');
+      return;
+    }
+
+    if (roomParam && roomParam.trim().length >= 4) {
+      setPrefillJoinCode(roomParam.trim().toUpperCase());
+      setView('join');
+    }
   }, []);
 
-  // Listen to Firebase Auth state & auto-seed starter question bank if empty
+  // Listen to Firebase Auth State
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
-      setAuthUser(user);
       if (user) {
+        setIsGuest(false);
+        setUserEmail(user.email || '');
         try {
           const ensured = await ensurePlayerProfile(user);
           setProfile(ensured);
-          const adminFlag = await checkUserIsAdmin(user);
-          setIsAdmin(adminFlag);
-          if (adminFlag) {
-            ensureOwnerAdminBootstrap(user).catch(() => {});
+          if (user.email === BOOTSTRAPPED_ADMIN_EMAIL) {
+            await ensureOwnerAdminBootstrap(user);
           }
-
-          // Automatically seed the starter question bank if Firestore /questions is empty
-          const qSnap = await getDocs(
-            query(collection(db, 'questions'), where('isActive', '==', true))
-          );
-          if (qSnap.empty) {
-            seedStarterQuestionsToFirestore().catch(() => {});
-          }
+          const adminCheck = await checkUserIsAdmin(user);
+          setIsAdmin(adminCheck);
         } catch (err) {
-          console.error('Profile initialization error:', err);
+          console.error('Error loading user profile:', err);
         }
       } else {
+        setIsGuest(true);
+        setUserEmail('');
         setIsAdmin(false);
-        try {
-          const saved = localStorage.getItem('calc_racer_guest_profile');
-          if (saved) {
-            setProfile({ ...DEFAULT_GUEST_PROFILE, ...JSON.parse(saved) });
-          } else {
-            setProfile(DEFAULT_GUEST_PROFILE);
-          }
-        } catch {
-          setProfile(DEFAULT_GUEST_PROFILE);
-        }
+        setProfile(loadGuestProfile());
       }
       setAuthReady(true);
     });
     return () => unsub();
   }, []);
 
-  // Keep authenticated user profile synchronized in real time
-  useEffect(() => {
-    if (!authUser || !authReady) return;
-    const unsub = onSnapshot(
-      doc(db, 'profiles', authUser.uid),
-      (snap) => {
-        if (snap.exists()) {
-          setProfile(snap.data() as PlayerProfile);
-        }
-      },
-      () => {}
-    );
-    return () => unsub();
-  }, [authUser, authReady]);
-
-  const navigateTo = (target: ActiveView) => {
-    soundEngine.playClick();
-    setProfileMenuOpen(false);
-    setView(target);
-    if (typeof window !== 'undefined') {
-      if (target === 'admin') {
-        window.history.pushState({}, '', '/admin');
-      } else if (
-        window.location.pathname === '/admin' ||
-        window.location.search.includes('room=')
-      ) {
-        window.history.pushState({}, '', '/');
-      }
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  };
-
-  const handleOpenSetup = (playerMode: 'solo' | 'multiplayer') => {
-    setSetupInitialPlayerMode(playerMode);
-    navigateTo('setup');
+  const handleToggleSound = () => {
+    const next = soundEngine.toggle();
+    setSoundEnabled(next);
   };
 
   const handleSetSoundEnabled = (enabled: boolean) => {
@@ -256,47 +270,56 @@ export default function App() {
     setSoundEnabled(next);
   };
 
-  const handleSignIn = async () => {
+  const handleGoogleSignIn = async () => {
+    setAuthBannerError(null);
     soundEngine.playClick();
-    setProfileMenuOpen(false);
-    setAuthBanner(null);
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err) {
-      setAuthBanner(
-        err instanceof Error ? err.message : 'Sign-in popup was closed or blocked.'
+      setAuthBannerError(
+        err instanceof Error
+          ? err.message
+          : 'Google Sign-In could not be completed. You can still play immediately as a Guest!'
       );
     }
   };
 
   const handleSignOut = async () => {
     soundEngine.playClick();
-    setProfileMenuOpen(false);
     await signOut(auth);
-    navigateTo('home');
-  };
-
-  const handleStartSoloOrTimed = async (mode: 'solo' | 'timed') => {
-    const chosen = await selectUniqueQuestionsForPlayer(
-      profile.uid,
-      !authUser,
-      selectedCategory,
-      selectedDifficulty,
-      questionCount,
-      selectedSubcategories
-    );
-    setRaceQuestions(chosen);
-    setRaceSessionId((prev) => prev + 1);
-    setActiveMode(mode);
-    if (mode === 'timed') {
-      setQuestionTimeLimitSec(10);
+    if (view === 'admin') {
+      setView('home');
     }
-    setActiveRoomCode('');
-    setActiveRoom(null);
-    navigateTo('race');
   };
 
-  const handleCreateRoom = async (maxPlayers: 2 | 4) => {
+  const handleStartSolo = async (mode: 'solo' | 'timed', level?: number) => {
+    if (level !== undefined) {
+      setSelectedLevel(level);
+    }
+    if (!isInteractivePuzzleGame(selectedGameId)) {
+      const questions = await selectUniqueQuestionsForPlayer(
+        profile.uid,
+        isGuest,
+        selectedCategory,
+        selectedDifficulty,
+        questionCount,
+        selectedSubcategories,
+        selectedGameId,
+        selectedIqFields
+      );
+      setActiveQuestions(questions);
+    }
+    setActiveMode(mode);
+    setActiveRoomCode(undefined);
+    setActiveRoomRecord(null);
+    setActiveRoomPlayers([]);
+    setView('arena');
+  };
+
+  const handleCreateRoom = async (maxPlayers: 2 | 4, level?: number) => {
+    if (level !== undefined) {
+      setSelectedLevel(level);
+    }
     const code = await createMultiplayerRoom(
       profile,
       maxPlayers,
@@ -304,73 +327,73 @@ export default function App() {
       selectedDifficulty,
       questionTimeLimitSec,
       questionCount,
-      selectedSubcategories
+      selectedSubcategories,
+      selectedGameId,
+      selectedIqFields
     );
-    setActiveRoomCode(code);
     setActiveMode(maxPlayers === 2 ? '2p' : '4p');
-    navigateTo('lobby');
+    setActiveRoomCode(code);
+    setView('lobby');
   };
 
-  const handleJoinRoom = async (code: string) => {
-    const room = await joinMultiplayerRoom(code, profile);
-    setInvitedRoomCode('');
-    setActiveRoomCode(room.roomCode);
-    setActiveRoom(room);
+  const handleJoinRoom = async (roomCode: string) => {
+    const normalized = roomCode.trim().toUpperCase();
+    const room = await joinMultiplayerRoom(normalized, profile);
+    setSelectedGameId(room.gameId || 'calculation_racer');
+    setSelectedIqFields(
+      room.iqFields && room.iqFields.length > 0
+        ? room.iqFields
+        : IQ_RELAY_ALL_FIELDS.slice(0, 4)
+    );
+    setActiveMode(room.maxPlayers === 4 ? '4p' : '2p');
     setSelectedCategory(room.category);
+    setSelectedSubcategories(
+      room.subcategories && room.subcategories.length > 0
+        ? room.subcategories
+        : [SUBCATEGORIES_BY_CATEGORY[room.category][0]]
+    );
     setSelectedDifficulty(room.difficulty);
-    setSelectedSubcategories(room.subcategories || []);
-    if (room.questionCount) {
-      setQuestionCount(room.questionCount);
-    }
-    setQuestionTimeLimitSec(room.questionTimeLimitSec);
-    setActiveMode(room.maxPlayers === 2 ? '2p' : '4p');
-
-    if (room.status === 'racing') {
-      const allQ = await fetchActiveQuestions();
-      const ordered = resolveRoomQuestionSequence(
-        room.questionIds,
-        allQ,
-        room.category,
-        room.difficulty,
-        room.questionCount || 10,
-        room.subcategories || []
-      );
-      setRaceQuestions(ordered);
-      navigateTo('race');
-    } else {
-      navigateTo('lobby');
-    }
+    setQuestionCount((room.questionCount as QuestionCountOption) || 10);
+    setQuestionTimeLimitSec(
+      (room.questionTimeLimitSec as QuestionTimeOption) || 20
+    );
+    setActiveRoomCode(normalized);
+    setView('lobby');
   };
 
-  const handleStartActiveMultiplayerRace = async (
+  const handleStartActiveRaceFromLobby = async (
     room: RoomRecord,
     players: RoomPlayerRecord[]
   ) => {
-    const allQ = await fetchActiveQuestions();
-    const ordered = resolveRoomQuestionSequence(
-      room.questionIds,
-      allQ,
-      room.category,
-      room.difficulty,
-      room.questionCount || 10,
-      room.subcategories || []
-    );
-    setRaceQuestions(ordered);
-    setRaceSessionId((prev) => prev + 1);
-    setActiveRoom(room);
-    setActiveRoomPlayers(players);
+    const roomGameId = room.gameId || 'calculation_racer';
+    if (!isInteractivePuzzleGame(roomGameId)) {
+      const pool = await fetchActiveQuestions();
+      const resolvedQuestions = resolveRoomQuestionSequence(
+        room.questionIds || [],
+        pool,
+        room.category,
+        room.difficulty,
+        room.questionCount || 10,
+        room.subcategories || [],
+        roomGameId,
+        room.iqFields || []
+      );
+      setActiveQuestions(resolvedQuestions);
+    }
+    setSelectedGameId(roomGameId);
     setSelectedCategory(room.category);
     setSelectedDifficulty(room.difficulty);
-    setSelectedSubcategories(room.subcategories || []);
-    if (room.questionCount) {
-      setQuestionCount(room.questionCount);
-    }
-    setQuestionTimeLimitSec(room.questionTimeLimitSec);
-    setActiveMode(room.maxPlayers === 2 ? '2p' : '4p');
-    navigateTo('race');
+    setQuestionTimeLimitSec(
+      (room.questionTimeLimitSec as QuestionTimeOption) || 20
+    );
+    setActiveMode(room.maxPlayers === 4 ? '4p' : '2p');
+    setActiveRoomRecord(room);
+    setActiveRoomPlayers(players);
+    setView('arena');
   };
 
-  const handleSaveGuestResult = (res: {
+  const handleSaveLocalGuestResult = (result: {
+    gameId: TrojoGameId;
     category: QuestionCategory;
     difficulty: QuestionDifficulty;
     mode: GameMode;
@@ -382,475 +405,573 @@ export default function App() {
     durationMs: number;
     completedAtMs: number;
   }) => {
-    const newRecord: RaceResultRecord = {
-      id: `guest_${res.completedAtMs}`,
-      roomCode: `solo_${res.completedAtMs}`,
-      playerId: profile.uid,
-      nickname: profile.nickname,
-      carColor: profile.carColor,
-      mode: res.mode,
-      category: res.category,
-      difficulty: res.difficulty,
-      placement: 1,
-      score: res.score,
-      correctAnswers: res.correctAnswers,
-      wrongAnswers: res.wrongAnswers,
-      accuracy: res.accuracy,
-      distance: res.distance,
-      durationMs: res.durationMs,
-      isPublic: false,
-      completedAtMs: res.completedAtMs,
-    };
-    const nextResults = [newRecord, ...guestResults].slice(0, 50);
-    setGuestResults(nextResults);
-
-    // Update guest profile best stats
-    const isWin = res.distance >= 100;
     const nextProfile: PlayerProfile = {
       ...profile,
-      wins: profile.wins + (isWin ? 1 : 0),
+      wins: result.distance >= 100 || result.score >= 50 ? profile.wins + 1 : profile.wins,
       totalRaces: profile.totalRaces + 1,
-      bestScore: Math.max(profile.bestScore || 0, res.score),
       bestTimeMs:
-        res.distance >= 100
-          ? profile.bestTimeMs === 0
-            ? res.durationMs
-            : Math.min(profile.bestTimeMs, res.durationMs)
+        result.distance >= 100 &&
+        (profile.bestTimeMs === 0 || result.durationMs < profile.bestTimeMs)
+          ? result.durationMs
           : profile.bestTimeMs,
-      totalCorrect: profile.totalCorrect + res.correctAnswers,
-      totalWrong: profile.totalWrong + res.wrongAnswers,
+      bestScore: Math.max(profile.bestScore || 0, result.score),
+      totalCorrect: (profile.totalCorrect || 0) + result.correctAnswers,
+      totalWrong: (profile.totalWrong || 0) + result.wrongAnswers,
     };
     setProfile(nextProfile);
+    saveGuestProfile(nextProfile);
 
     try {
-      localStorage.setItem('calc_racer_guest_results', JSON.stringify(nextResults));
-      localStorage.setItem('calc_racer_guest_profile', JSON.stringify(nextProfile));
+      const raw = localStorage.getItem(GUEST_HISTORY_STORAGE_KEY);
+      const prev: RaceResultRecord[] = raw ? JSON.parse(raw) : [];
+      const newRecord: RaceResultRecord = {
+        id: `guest_res_${Date.now()}`,
+        roomCode: 'SOLO',
+        gameId: result.gameId,
+        playerId: profile.uid,
+        nickname: profile.nickname,
+        carColor: profile.carColor,
+        mode: result.mode,
+        category: result.category,
+        difficulty: result.difficulty,
+        placement: 1,
+        score: result.score,
+        correctAnswers: result.correctAnswers,
+        wrongAnswers: result.wrongAnswers,
+        accuracy: result.accuracy,
+        distance: result.distance,
+        durationMs: result.durationMs,
+        isPublic: false,
+        completedAtMs: result.completedAtMs,
+      };
+      const updatedHistory = [newRecord, ...prev].slice(0, 50);
+      localStorage.setItem(
+        GUEST_HISTORY_STORAGE_KEY,
+        JSON.stringify(updatedHistory)
+      );
     } catch {
-      // ignore
+      // ignore storage errors
     }
   };
 
-  const getInitials = (name: string) => {
-    const clean = name.trim();
-    if (!clean) return 'R';
-    const parts = clean.split(/\s+/);
-    if (parts.length >= 2) {
-      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  const handleReplayMultiplayer = async (roomCode: string) => {
+    try {
+      await resetMultiplayerRoomForRematch(roomCode, profile);
+      setActiveRoomCode(roomCode);
+      setView('lobby');
+    } catch (err) {
+      setAuthBannerError(
+        err instanceof Error ? err.message : 'Unable to start rematch.'
+      );
+      setView('lobby');
     }
-    return clean.slice(0, 2).toUpperCase();
   };
 
-  const carPalette = CAR_PALETTE[profile.carColor] || CAR_PALETTE.blue;
+  const carInfo = CAR_PALETTE[profile.carColor] || CAR_PALETTE.blue;
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F8FAFC] text-slate-900">
-      {/* CLEAN LIGHT-THEME TOP NAVIGATION */}
-      <header className="sticky top-0 z-40 border-b border-slate-200/90 bg-white/95 px-4 py-3.5 backdrop-blur-md sm:px-6">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
-          {/* Left: Game Logo & Name */}
-          <button
-            type="button"
-            onClick={() => navigateTo('home')}
-            className="flex items-center gap-2.5 text-left focus:outline-none"
-          >
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-sky-500 text-white shadow-2xs">
-              <Car className="h-5 w-5" />
-            </div>
-            <span className="font-display text-lg font-extrabold tracking-tight text-slate-900 sm:text-xl whitespace-nowrap">
-              Calculation Racer
-            </span>
-          </button>
-
-          {/* Center: Home & Leaderboard Navigation */}
-          <nav className="hidden md:flex items-center gap-2">
+    <AppErrorBoundary>
+      <div className="flex min-h-screen flex-col bg-[#F8FAFC] text-[#0F172A]">
+        {/* Top Navigation Header */}
+        <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur-md">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-3 py-2.5 sm:px-6">
+            {/* Brand Logo: TROJO — A Fun Nagar */}
             <button
               type="button"
-              onClick={() => navigateTo('home')}
-              className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors ${
-                view === 'home'
-                  ? 'bg-sky-50 text-sky-700'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-              }`}
+              onClick={() => {
+                soundEngine.playClick();
+                setView('home');
+              }}
+              className="group flex shrink-0 items-center gap-2.5 text-left"
             >
-              <Home className="h-4 w-4" />
-              <span>Home</span>
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#2563EB] text-white shadow-xs transition-transform group-hover:scale-105">
+                <Gamepad2 className="h-5 w-5" />
+              </div>
+              <div>
+                <span className="block font-display text-lg leading-none font-extrabold tracking-tight text-slate-900">
+                  TROJO
+                </span>
+                <span className="mt-0.5 block text-[11px] font-extrabold text-[#2563EB]">
+                  A Fun Nagar
+                </span>
+              </div>
             </button>
 
-            <button
-              type="button"
-              onClick={() => handleOpenSetup('solo')}
-              className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors ${
-                view === 'setup' && setupInitialPlayerMode === 'solo'
-                  ? 'bg-sky-50 text-sky-700'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-              }`}
-            >
-              <Play className="h-4 w-4" />
-              <span>Play Game</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => navigateTo('leaderboard')}
-              className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors ${
-                view === 'leaderboard'
-                  ? 'bg-amber-50 text-amber-800'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-              }`}
-            >
-              <Trophy className="h-4 w-4" />
-              <span>Leaderboard</span>
-            </button>
-          </nav>
-
-          {/* Right: Sign In / Guest Play & Profile Menu */}
-          <div className="flex items-center gap-2.5">
-            {!authUser && (
-              <button
-                type="button"
-                onClick={handleSignIn}
-                className="hidden sm:inline-flex items-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2 text-xs font-bold text-white shadow-2xs transition-colors hover:bg-sky-500 whitespace-nowrap"
-              >
-                <span>Sign In</span>
-              </button>
-            )}
-
-            {/* Profile Avatar, Nickname & Dropdown Menu */}
-            <div className="relative" ref={menuRef}>
+            {/* Primary Navigation Links */}
+            <nav className="hidden items-center gap-1.5 md:flex">
               <button
                 type="button"
                 onClick={() => {
                   soundEngine.playClick();
-                  setProfileMenuOpen((prev) => !prev);
+                  setView('home');
                 }}
-                className="flex items-center gap-2.5 rounded-2xl border border-slate-200 bg-slate-50/80 py-1.5 pr-3 pl-2 text-left transition-colors hover:border-slate-300 hover:bg-slate-100"
+                className={`min-h-[40px] rounded-xl px-3.5 py-2 text-xs font-extrabold transition-colors ${
+                  view === 'home'
+                    ? 'bg-blue-50 text-[#2563EB]'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
               >
-                <div
-                  className="flex h-8 w-8 items-center justify-center rounded-xl text-xs font-extrabold text-white shadow-2xs shrink-0"
-                  style={{ backgroundColor: carPalette.primary }}
-                >
-                  {getInitials(profile.nickname)}
-                </div>
-                <div className="hidden sm:block max-w-[120px]">
-                  <p className="truncate text-xs font-bold text-slate-900">
-                    {profile.nickname}
-                  </p>
-                  <p className="text-[10px] font-medium text-slate-500">
-                    {authUser ? 'Cloud Account' : 'Guest Play'}
-                  </p>
-                </div>
-                <ChevronDown className="h-4 w-4 text-slate-500" />
+                Home
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playClick();
+                  setSetupViewMode('library');
+                  setSetupPlayerMode('solo');
+                  setView('setup');
+                }}
+                className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition-colors ${
+                  view === 'setup' && setupPlayerMode === 'solo'
+                    ? 'bg-[#2563EB] text-white shadow-2xs'
+                    : 'text-slate-700 hover:bg-blue-50 hover:text-[#2563EB]'
+                }`}
+              >
+                <Gamepad2 className="h-3.5 w-3.5" />
+                <span>Play Games</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playClick();
+                  setSetupViewMode('configure');
+                  setSetupPlayerMode('multiplayer');
+                  setView('setup');
+                }}
+                className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition-colors ${
+                  view === 'setup' && setupPlayerMode === 'multiplayer'
+                    ? 'bg-[#16A34A] text-white shadow-2xs'
+                    : 'text-slate-700 hover:bg-emerald-50 hover:text-[#16A34A]'
+                }`}
+              >
+                <PlusCircle className="h-3.5 w-3.5" />
+                <span>Create Room</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playClick();
+                  setView('join');
+                }}
+                className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition-colors ${
+                  view === 'join'
+                    ? 'bg-[#7C3AED] text-white shadow-2xs'
+                    : 'text-slate-700 hover:bg-purple-50 hover:text-[#7C3AED]'
+                }`}
+              >
+                <KeyRound className="h-3.5 w-3.5" />
+                <span>Join Room</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playClick();
+                  setView('leaderboard');
+                }}
+                className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition-colors ${
+                  view === 'leaderboard'
+                    ? 'bg-blue-50 text-[#2563EB]'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <Trophy className="h-3.5 w-3.5" />
+                <span>Leaderboard</span>
+              </button>
+            </nav>
+
+            {/* Right Controls: Sound, Profile, Auth, Private Admin */}
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <button
+                type="button"
+                onClick={handleToggleSound}
+                title={soundEnabled ? 'Mute sound effects' : 'Enable sound effects'}
+                className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+              >
+                {soundEnabled ? (
+                  <Volume2 className="h-4 w-4 text-[#2563EB]" />
+                ) : (
+                  <VolumeX className="h-4 w-4 text-slate-400" />
+                )}
               </button>
 
-              {profileMenuOpen && (
-                <div className="absolute right-0 mt-2 w-60 rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
-                  <div className="border-b border-slate-100 px-3 py-2.5">
-                    <p className="truncate text-xs font-bold text-slate-900">
-                      {profile.nickname}
-                    </p>
-                    <p className="text-[11px] text-slate-500">
-                      {authUser
-                        ? authUser.email || 'Authenticated Player'
-                        : 'Guest Play Mode'}
-                    </p>
-                  </div>
+              {/* Profile Pill */}
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playClick();
+                  setView('profile');
+                }}
+                className={`flex min-h-[40px] items-center gap-2 rounded-xl border px-2.5 py-1.5 text-xs font-bold transition-colors ${
+                  view === 'profile'
+                    ? 'border-blue-300 bg-blue-50 text-blue-900'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <span
+                  className="flex h-6 w-6 items-center justify-center rounded-lg text-[11px] font-extrabold text-white"
+                  style={{ backgroundColor: carInfo.primary }}
+                >
+                  {getInitials(profile.nickname)}
+                </span>
+                <span className="hidden max-w-[100px] truncate sm:inline">
+                  {profile.nickname}
+                </span>
+              </button>
 
-                  {/* Mobile Nav Items inside menu */}
-                  <div className="mt-1 space-y-1 md:hidden border-b border-slate-100 pb-1">
-                    <button
-                      type="button"
-                      onClick={() => navigateTo('home')}
-                      className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                    >
-                      <Home className="h-4 w-4 text-sky-600" />
-                      <span>Home</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenSetup('solo')}
-                      className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                    >
-                      <Play className="h-4 w-4 text-sky-600" />
-                      <span>Play Game</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => navigateTo('leaderboard')}
-                      className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                    >
-                      <Trophy className="h-4 w-4 text-amber-500" />
-                      <span>Leaderboard</span>
-                    </button>
-                  </div>
-
-                  <div className="mt-1 space-y-1">
-                    <button
-                      type="button"
-                      onClick={() => navigateTo('profile')}
-                      className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                    >
-                      <UserIcon className="h-4 w-4 text-purple-600" />
-                      <span>My Profile & Scores</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setSoundEnabled(soundEngine.toggle())}
-                      className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                    >
-                      <span className="flex items-center gap-2.5">
-                        {soundEnabled ? (
-                          <Volume2 className="h-4 w-4 text-emerald-600" />
-                        ) : (
-                          <VolumeX className="h-4 w-4 text-slate-400" />
-                        )}
-                        <span>Sound Effects</span>
-                      </span>
-                      <span
-                        className={`rounded-md px-1.5 py-0.5 text-[10px] ${
-                          soundEnabled
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-slate-100 text-slate-500'
-                        }`}
-                      >
-                        {soundEnabled ? 'ON' : 'OFF'}
-                      </span>
-                    </button>
-
-                    {/* Admin Panel is strictly hidden from normal users & guests */}
-                    {isAdmin && (
-                      <button
-                        type="button"
-                        onClick={() => navigateTo('admin')}
-                        className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-bold text-sky-700 hover:bg-sky-50"
-                      >
-                        <Shield className="h-4 w-4 text-sky-600" />
-                        <span>Admin Panel</span>
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="mt-1 border-t border-slate-100 pt-1">
-                    {authUser ? (
-                      <button
-                        type="button"
-                        onClick={handleSignOut}
-                        className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50"
-                      >
-                        <LogOut className="h-4 w-4" />
-                        <span>Sign Out</span>
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handleSignIn}
-                        className="flex w-full items-center justify-center rounded-xl bg-sky-600 px-3 py-2 text-xs font-bold text-white hover:bg-sky-500"
-                      >
-                        Sign In / Create Account
-                      </button>
-                    )}
-                  </div>
-                </div>
+              {/* Private Admin Link: ONLY visible when signed in as rizveemanger@gmail.com */}
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playClick();
+                    setView('admin');
+                  }}
+                  className={`flex min-h-[40px] items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition-colors ${
+                    view === 'admin'
+                      ? 'border-blue-600 bg-[#2563EB] text-white'
+                      : 'border-blue-200 bg-blue-50 text-blue-800 hover:bg-blue-100'
+                  }`}
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Admin</span>
+                </button>
               )}
+
+              {/* Google Sign-In / Sign-Out */}
+              {authReady &&
+                (isGuest ? (
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignIn}
+                    className="flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[#2563EB] px-3 py-1.5 text-xs font-extrabold text-white shadow-2xs transition-colors hover:bg-blue-700"
+                  >
+                    <LogIn className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Sign In</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleSignOut}
+                    title="Sign Out"
+                    className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                  >
+                    <LogOut className="h-4 w-4" />
+                  </button>
+                ))}
             </div>
           </div>
-        </div>
-      </header>
 
-      {authBanner && (
-        <div className="mx-auto mt-4 max-w-6xl px-4 sm:px-6">
-          <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
-            {authBanner}
-          </div>
-        </div>
-      )}
-
-      {/* MAIN VIEW ROUTER */}
-      <main className="flex-1">
-        {view === 'home' && (
-          <HomePage
-            profile={profile}
-            isGuest={!authUser}
-            onOpenSetup={handleOpenSetup}
-            onOpenJoinRoom={() => navigateTo('join')}
-            onOpenLeaderboard={() => navigateTo('leaderboard')}
-            onSignIn={handleSignIn}
-          />
-        )}
-
-        {view === 'setup' && (
-          <GameSetupPage
-            profile={profile}
-            isGuest={!authUser}
-            initialPlayerMode={setupInitialPlayerMode}
-            selectedCategory={selectedCategory}
-            selectedSubcategories={selectedSubcategories}
-            selectedDifficulty={selectedDifficulty}
-            questionCount={questionCount}
-            questionTimeLimitSec={questionTimeLimitSec}
-            soundEnabled={soundEnabled}
-            onSelectCategory={setSelectedCategory}
-            onSelectSubcategories={setSelectedSubcategories}
-            onSelectDifficulty={setSelectedDifficulty}
-            onSelectQuestionCount={setQuestionCount}
-            onSelectTimeLimit={setQuestionTimeLimitSec}
-            onToggleSound={handleSetSoundEnabled}
-            onStartSolo={handleStartSoloOrTimed}
-            onCreateRoom={handleCreateRoom}
-            onOpenJoinRoom={() => navigateTo('join')}
-            onBackHome={() => navigateTo('home')}
-            onSignIn={handleSignIn}
-          />
-        )}
-
-        {view === 'join' && (
-          <JoinRoomPage
-            profile={profile}
-            isGuest={!authUser}
-            initialRoomCode={invitedRoomCode}
-            onJoinRoom={handleJoinRoom}
-            onOpenCreateRoom={() => handleOpenSetup('multiplayer')}
-            onBackHome={() => navigateTo('home')}
-            onSignIn={handleSignIn}
-          />
-        )}
-
-        {view === 'leaderboard' && (
-          <LeaderboardPage
-            profile={profile}
-            isGuest={!authUser}
-            onBackHome={() => navigateTo('home')}
-            onOpenSetup={() => handleOpenSetup('solo')}
-          />
-        )}
-
-        {view === 'lobby' && activeRoomCode && (
-          <RoomLobbyPage
-            roomCode={activeRoomCode}
-            profile={profile}
-            onStartActiveRace={handleStartActiveMultiplayerRace}
-            onLeaveRoom={() => {
-              setActiveRoomCode('');
-              navigateTo('home');
-            }}
-          />
-        )}
-
-        {view === 'race' && (
-          <RaceArenaPage
-            key={`race_session_${raceSessionId}`}
-            mode={activeMode}
-            category={selectedCategory}
-            difficulty={selectedDifficulty}
-            questionTimeLimitSec={questionTimeLimitSec}
-            questions={raceQuestions}
-            profile={profile}
-            isGuest={!authUser}
-            roomCode={activeRoomCode || undefined}
-            initialRoom={activeRoom}
-            initialPlayers={activeRoomPlayers}
-            onSaveLocalGuestResult={handleSaveGuestResult}
-            onPlayAgain={() => {
-              if (activeMode === '2p' || activeMode === '4p') {
-                navigateTo('join');
-              } else {
-                handleStartSoloOrTimed(activeMode === 'timed' ? 'timed' : 'solo');
-              }
-            }}
-            onChangeSettings={() =>
-              handleOpenSetup(
-                activeMode === '2p' || activeMode === '4p' ? 'multiplayer' : 'solo'
-              )
-            }
-            onOpenLeaderboard={() => navigateTo('leaderboard')}
-            onExitToHome={() => {
-              setActiveRoomCode('');
-              navigateTo('home');
-            }}
-          />
-        )}
-
-        {view === 'profile' && (
-          <ProfileAndScoresPage
-            profile={profile}
-            isGuest={!authUser}
-            guestResults={guestResults}
-            onSignIn={handleSignIn}
-            onBackHome={() => navigateTo('home')}
-            onProfileUpdated={(updated) => {
-              const next = { ...profile, ...updated };
-              setProfile(next);
-              if (!authUser) {
-                try {
-                  localStorage.setItem(
-                    'calc_racer_guest_profile',
-                    JSON.stringify(next)
-                  );
-                } catch {
-                  // ignore
-                }
-              }
-            }}
-          />
-        )}
-
-        {view === 'admin' && (
-          <AdminDashboardPage
-            isAdmin={isAdmin}
-            adminUid={authUser?.uid || ''}
-            adminEmail={authUser?.email || ''}
-            onExitAdmin={() => navigateTo('home')}
-          />
-        )}
-      </main>
-
-      {/* CLEAN LIGHT FOOTER (Admin link hidden from normal users & guests) */}
-      <footer className="mt-12 border-t border-slate-200 bg-white px-4 py-6 text-xs text-slate-500 sm:px-6">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4">
-          <span className="font-semibold text-slate-600">
-            Calculation Racer · Ready, Set, Solve!
-          </span>
-          <div className="flex items-center gap-6 font-semibold">
+          {/* Mobile Quick Bar */}
+          <div className="flex items-center justify-around border-t border-slate-100 bg-slate-50/90 px-2 py-1.5 md:hidden">
             <button
               type="button"
-              onClick={() => navigateTo('home')}
-              className="hover:text-sky-600"
+              onClick={() => setView('home')}
+              className={`min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-extrabold ${
+                view === 'home' ? 'bg-blue-100 text-[#2563EB]' : 'text-slate-600'
+              }`}
             >
               Home
             </button>
             <button
               type="button"
-              onClick={() => handleOpenSetup('solo')}
-              className="hover:text-sky-600"
+              onClick={() => {
+                setSetupViewMode('library');
+                setSetupPlayerMode('solo');
+                setView('setup');
+              }}
+              className={`min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-extrabold ${
+                view === 'setup' && setupPlayerMode === 'solo'
+                  ? 'bg-[#2563EB] text-white'
+                  : 'text-slate-600'
+              }`}
             >
-              Play Game
+              Play Games
             </button>
             <button
               type="button"
-              onClick={() => navigateTo('leaderboard')}
-              className="hover:text-sky-600"
+              onClick={() => {
+                setSetupViewMode('configure');
+                setSetupPlayerMode('multiplayer');
+                setView('setup');
+              }}
+              className={`min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-extrabold ${
+                view === 'setup' && setupPlayerMode === 'multiplayer'
+                  ? 'bg-[#16A34A] text-white'
+                  : 'text-slate-600'
+              }`}
             >
-              Leaderboard
+              Create Room
             </button>
             <button
               type="button"
-              onClick={() => navigateTo('profile')}
-              className="hover:text-sky-600"
+              onClick={() => setView('join')}
+              className={`min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-extrabold ${
+                view === 'join' ? 'bg-[#7C3AED] text-white' : 'text-slate-600'
+              }`}
             >
-              My Profile
+              Join
             </button>
-            {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setView('leaderboard')}
+              className={`min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-extrabold ${
+                view === 'leaderboard'
+                  ? 'bg-blue-100 text-[#2563EB]'
+                  : 'text-slate-600'
+              }`}
+            >
+              Ranks
+            </button>
+          </div>
+        </header>
+
+        {/* Auth Error Notice Banner */}
+        {authBannerError && (
+          <div className="mx-auto mt-3 max-w-4xl px-4">
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-900">
+              <span>{authBannerError}</span>
               <button
                 type="button"
-                onClick={() => navigateTo('admin')}
-                className="text-sky-700 hover:text-sky-800"
+                onClick={() => setAuthBannerError(null)}
+                className="font-bold underline"
               >
-                Admin
+                Dismiss
               </button>
-            )}
+            </div>
           </div>
-        </div>
-      </footer>
-    </div>
+        )}
+
+        {/* Main Content Router */}
+        <main className="flex-1">
+          {view === 'home' && (
+            <HomePage
+              profile={profile}
+              isGuest={isGuest}
+              onOpenLibrary={() => {
+                setSetupViewMode('library');
+                setSetupPlayerMode('solo');
+                setView('setup');
+              }}
+              onSelectGame={(gameId, mode) => {
+                setSelectedGameId(gameId);
+                setSetupViewMode('configure');
+                setSetupPlayerMode(mode);
+                setView('setup');
+              }}
+              onQuickPlayGame={(gameId) => {
+                setSelectedGameId(gameId);
+                setSetupViewMode('configure');
+                setSetupPlayerMode('solo');
+                setView('setup');
+              }}
+              onOpenJoinRoom={() => setView('join')}
+              onOpenLeaderboard={() => setView('leaderboard')}
+              onOpenProfile={() => setView('profile')}
+              onSignIn={handleGoogleSignIn}
+            />
+          )}
+
+          {view === 'setup' && (
+            <GameSetupPage
+              profile={profile}
+              isGuest={isGuest}
+              initialViewMode={setupViewMode}
+              initialPlayerMode={setupPlayerMode}
+              selectedGameId={selectedGameId}
+              selectedLevel={selectedLevel}
+              selectedIqFields={selectedIqFields}
+              selectedCategory={selectedCategory}
+              selectedSubcategories={selectedSubcategories}
+              selectedDifficulty={selectedDifficulty}
+              questionCount={questionCount}
+              questionTimeLimitSec={questionTimeLimitSec}
+              soundEnabled={soundEnabled}
+              onSelectGameId={setSelectedGameId}
+              onSelectLevel={setSelectedLevel}
+              onSelectIqFields={setSelectedIqFields}
+              onSelectCategory={(cat) => {
+                setSelectedCategory(cat);
+                setSelectedSubcategories([SUBCATEGORIES_BY_CATEGORY[cat][0]]);
+              }}
+              onSelectSubcategories={setSelectedSubcategories}
+              onSelectDifficulty={setSelectedDifficulty}
+              onSelectQuestionCount={setQuestionCount}
+              onSelectTimeLimit={(sec) =>
+                setQuestionTimeLimitSec(sec as QuestionTimeOption)
+              }
+              onToggleSound={handleSetSoundEnabled}
+              onStartSolo={handleStartSolo}
+              onCreateRoom={handleCreateRoom}
+              onOpenJoinRoom={() => setView('join')}
+              onBackHome={() => setView('home')}
+              onSignIn={handleGoogleSignIn}
+            />
+          )}
+
+          {view === 'join' && (
+            <JoinRoomPage
+              profile={profile}
+              isGuest={isGuest}
+              initialRoomCode={prefillJoinCode}
+              onJoinRoom={handleJoinRoom}
+              onOpenCreateRoom={() => {
+                setSetupViewMode('configure');
+                setSetupPlayerMode('multiplayer');
+                setView('setup');
+              }}
+              onBackHome={() => setView('home')}
+              onSignIn={handleGoogleSignIn}
+            />
+          )}
+
+          {view === 'lobby' && activeRoomCode && (
+            <RoomLobbyPage
+              roomCode={activeRoomCode}
+              profile={profile}
+              onStartActiveRace={handleStartActiveRaceFromLobby}
+              onLeaveRoom={() => {
+                setActiveRoomCode(undefined);
+                setView('home');
+              }}
+            />
+          )}
+
+          {view === 'arena' &&
+            (isInteractivePuzzleGame(selectedGameId) ? (
+              <PuzzleGameArenaPage
+                gameId={selectedGameId}
+                mode={activeMode}
+                category={selectedCategory}
+                difficulty={selectedDifficulty}
+                initialLevel={selectedLevel}
+                profile={profile}
+                isGuest={isGuest}
+                roomCode={activeRoomCode}
+                initialRoom={activeRoomRecord}
+                initialPlayers={activeRoomPlayers}
+                onSaveLocalGuestResult={handleSaveLocalGuestResult}
+                onPlayAgain={() => {
+                  handleStartSolo('solo', selectedLevel);
+                }}
+                onReplayMultiplayer={handleReplayMultiplayer}
+                onPlayMoreGames={() => {
+                  setSetupViewMode('library');
+                  setSetupPlayerMode('solo');
+                  setView('setup');
+                }}
+                onOpenLeaderboard={() => setView('leaderboard')}
+                onExitToHome={() => {
+                  setActiveRoomCode(undefined);
+                  setView('home');
+                }}
+              />
+            ) : (
+              <RaceArenaPage
+                gameId={selectedGameId}
+                mode={activeMode}
+                category={selectedCategory}
+                difficulty={selectedDifficulty}
+                questionTimeLimitSec={questionTimeLimitSec}
+                questions={activeQuestions}
+                profile={profile}
+                isGuest={isGuest}
+                roomCode={activeRoomCode}
+                initialRoom={activeRoomRecord}
+                initialPlayers={activeRoomPlayers}
+                onSaveLocalGuestResult={handleSaveLocalGuestResult}
+                onPlayAgain={() => {
+                  handleStartSolo('solo');
+                }}
+                onReplayMultiplayer={handleReplayMultiplayer}
+                onPlayMoreGames={() => {
+                  setSetupViewMode('library');
+                  setSetupPlayerMode('solo');
+                  setView('setup');
+                }}
+                onChangeSettings={() => {
+                  setSetupViewMode('configure');
+                  setSetupPlayerMode('solo');
+                  setView('setup');
+                }}
+                onOpenLeaderboard={() => setView('leaderboard')}
+                onExitToHome={() => {
+                  setActiveRoomCode(undefined);
+                  setView('home');
+                }}
+              />
+            ))}
+
+          {view === 'leaderboard' && (
+            <LeaderboardPage
+              profile={profile}
+              isGuest={isGuest}
+              onBackHome={() => setView('home')}
+              onOpenSetup={() => {
+                setSetupViewMode('library');
+                setSetupPlayerMode('solo');
+                setView('setup');
+              }}
+            />
+          )}
+
+          {view === 'profile' && (
+            <ProfileAndScoresPage
+              profile={profile}
+              isGuest={isGuest}
+              onUpdateProfileState={(next) => setProfile(next)}
+              onSignInGoogle={handleGoogleSignIn}
+              onBackHome={() => setView('home')}
+            />
+          )}
+
+          {view === 'admin' && (
+            <AdminDashboardPage
+              isAdmin={isAdmin}
+              adminUid={profile.uid}
+              adminEmail={userEmail}
+              onExitAdmin={() => setView('home')}
+            />
+          )}
+        </main>
+
+        {/* Clean Footer */}
+        <footer className="mt-12 border-t border-slate-200 bg-white py-5 text-center text-xs text-slate-500">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6">
+            <p className="font-bold text-slate-700">
+              TROJO — A Fun Nagar · Calculation Racer, Water Sort, Word Finder, 2048 &amp; Mahjong Solitaire
+            </p>
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setSetupViewMode('library');
+                  setSetupPlayerMode('solo');
+                  setView('setup');
+                }}
+                className="font-semibold hover:text-slate-800"
+              >
+                Play Games
+              </button>
+              <button
+                type="button"
+                onClick={() => setView('leaderboard')}
+                className="font-semibold hover:text-slate-800"
+              >
+                Leaderboard
+              </button>
+              <button
+                type="button"
+                onClick={() => setView('profile')}
+                className="font-semibold hover:text-slate-800"
+              >
+                Gaming Profile
+              </button>
+            </div>
+          </div>
+        </footer>
+      </div>
+    </AppErrorBoundary>
   );
 }
+
+export default App;

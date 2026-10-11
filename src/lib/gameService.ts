@@ -16,6 +16,7 @@ import {
   AdminAuditLogRecord,
   CarColor,
   GameMode,
+  IqRelayField,
   OperationType,
   PlayerProfile,
   QuestionCategory,
@@ -28,6 +29,7 @@ import {
   RaceResultRecord,
   RoomPlayerRecord,
   RoomRecord,
+  TrojoGameId,
 } from '../game/types';
 import {
   SEED_QUESTIONS,
@@ -40,6 +42,11 @@ import {
   selectRaceQuestions,
   verifyOptionWithHash,
 } from './seedQuestions';
+import {
+  TROJO_GAME_QUESTIONS,
+  findTrojoQuestionById,
+  selectTrojoGameQuestions,
+} from './trojoGameBanks';
 
 export function sanitizeNickname(raw: string): string {
   const cleaned = raw.replace(/[^a-zA-Z0-9_\- ]/g, '').trim();
@@ -175,7 +182,7 @@ export async function updatePlayerPreferences(
 
 export async function fetchActiveQuestions(): Promise<QuestionItem[]> {
   const aiQuestions = getCachedAiQuestions();
-  const basePool = [...aiQuestions, ...SEED_QUESTIONS];
+  const basePool = [...aiQuestions, ...SEED_QUESTIONS, ...TROJO_GAME_QUESTIONS];
   try {
     const q = query(collection(db, 'questions'), where('isActive', '==', true));
     const snap = await getDocs(q);
@@ -396,7 +403,9 @@ export async function selectUniqueQuestionsForPlayer(
   category: QuestionCategory,
   difficulty: QuestionDifficulty,
   count: QuestionCountOption,
-  subcategories: string[] = []
+  subcategories: string[] = [],
+  gameId: TrojoGameId = 'calculation_racer',
+  iqFields: IqRelayField[] = []
 ): Promise<QuestionItem[]> {
   const allQuestions = await fetchActiveQuestions();
   const seenIds = await fetchPlayerSeenQuestionIds(
@@ -406,16 +415,27 @@ export async function selectUniqueQuestionsForPlayer(
     difficulty
   );
 
-  const chosen = selectRaceQuestions(
-    allQuestions,
-    category,
-    difficulty,
-    count,
-    subcategories,
-    seenIds
-  );
+  const chosen =
+    gameId === 'calculation_racer'
+      ? selectRaceQuestions(
+          allQuestions,
+          category,
+          difficulty,
+          count,
+          subcategories,
+          seenIds
+        )
+      : selectTrojoGameQuestions(
+          gameId,
+          allQuestions,
+          category,
+          difficulty,
+          count,
+          subcategories,
+          iqFields,
+          seenIds
+        );
 
-  // Check if any chosen question had to be recycled from seenIds
   const recycledAny = chosen.some((q) => seenIds.has(q.id));
 
   await recordPlayerSeenQuestions(
@@ -436,13 +456,16 @@ export function resolveRoomQuestionSequence(
   fallbackCategory: QuestionCategory,
   fallbackDifficulty: QuestionDifficulty,
   fallbackCount: number = 10,
-  fallbackSubcategories: string[] = []
+  fallbackSubcategories: string[] = [],
+  gameId: TrojoGameId = 'calculation_racer',
+  iqFields: IqRelayField[] = []
 ): QuestionItem[] {
   const ordered: QuestionItem[] = [];
   const usedIds = new Set<string>();
   for (const id of questionIds) {
     if (usedIds.has(id)) continue;
-    const item = reconstructQuestionById(id, pool);
+    const item =
+      findTrojoQuestionById(id) || reconstructQuestionById(id, pool);
     if (item) {
       usedIds.add(id);
       ordered.push(item);
@@ -450,6 +473,17 @@ export function resolveRoomQuestionSequence(
   }
   if (ordered.length > 0) {
     return ordered;
+  }
+  if (gameId !== 'calculation_racer') {
+    return selectTrojoGameQuestions(
+      gameId,
+      pool,
+      fallbackCategory,
+      fallbackDifficulty,
+      fallbackCount,
+      fallbackSubcategories,
+      iqFields
+    );
   }
   return selectRaceQuestions(
     pool,
@@ -514,7 +548,9 @@ export async function resolveQuestionAnswer(
 
   // 1. Fast synchronous local lookup first (0ms latency)
   if (correctOption === undefined) {
-    const reconstructed = reconstructQuestionById(question.id, SEED_QUESTIONS);
+    const reconstructed =
+      findTrojoQuestionById(question.id) ||
+      reconstructQuestionById(question.id, SEED_QUESTIONS);
     if (reconstructed && reconstructed.correctOption !== undefined) {
       correctOption = reconstructed.correctOption;
       explanation = explanation || reconstructed.explanation || '';
@@ -579,7 +615,9 @@ export async function createMultiplayerRoom(
   difficulty: QuestionDifficulty,
   questionTimeLimitSec: number,
   questionCount: QuestionCountOption = 10,
-  subcategories: string[] = []
+  subcategories: string[] = [],
+  gameId: TrojoGameId = 'calculation_racer',
+  iqFields: IqRelayField[] = []
 ): Promise<string> {
   const selected = await selectUniqueQuestionsForPlayer(
     profile.uid,
@@ -587,7 +625,9 @@ export async function createMultiplayerRoom(
     category,
     difficulty,
     questionCount,
-    subcategories
+    subcategories,
+    gameId,
+    iqFields
   );
   const questionIds = selected.map((q) => q.id);
 
@@ -604,6 +644,11 @@ export async function createMultiplayerRoom(
         hostId: profile.uid,
         hostNickname: profile.nickname,
         maxPlayers,
+        gameId,
+        iqFields:
+          gameId === 'iq_relay' && iqFields.length > 0
+            ? iqFields.slice(0, 10)
+            : ['Numerical Reasoning', 'Logical Reasoning', 'Pattern Recognition', 'Quick Maths'],
         category,
         subcategories: subcategories.slice(0, 10),
         difficulty,
@@ -634,6 +679,8 @@ export async function createMultiplayerRoom(
         ready: true,
         distance: 0,
         score: 0,
+        bluffText: '',
+        votedOption: -1,
         correctAnswers: 0,
         wrongAnswers: 0,
         currentQuestionIndex: 0,
@@ -656,6 +703,115 @@ export async function createMultiplayerRoom(
     }
   }
   throw new Error('Could not generate a unique room code. Please try again.');
+}
+
+export async function resetMultiplayerRoomForRematch(
+  roomCode: string,
+  profile: PlayerProfile
+): Promise<RoomRecord> {
+  const roomRef = doc(db, 'rooms', roomCode);
+  const roomSnap = await getDoc(roomRef);
+  if (!roomSnap.exists()) {
+    throw new Error('Original room is no longer available.');
+  }
+  const room = roomSnap.data() as RoomRecord;
+  const gameId = room.gameId || 'calculation_racer';
+  const count = (room.questionCount || 10) as QuestionCountOption;
+
+  // Reset current player state for the rematch
+  const myPlayerRef = doc(db, 'rooms', roomCode, 'players', profile.uid);
+  const mySnap = await getDoc(myPlayerRef);
+  if (mySnap.exists()) {
+    await updateDoc(myPlayerRef, {
+      ready: true,
+      distance: 0,
+      score: 0,
+      bluffText: '',
+      votedOption: -1,
+      correctAnswers: 0,
+      wrongAnswers: 0,
+      currentQuestionIndex: 0,
+      finished: false,
+      finishTimeMs: 0,
+      placement: 0,
+      connected: true,
+      lastSeenAtMs: Date.now(),
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  // If room is still marked 'finished', reset room to 'waiting' with a fresh question set
+  if (room.status === 'finished') {
+    const nextQuestions = await selectUniqueQuestionsForPlayer(
+      profile.uid,
+      false,
+      room.category,
+      room.difficulty,
+      count,
+      room.subcategories || [],
+      gameId,
+      room.iqFields || []
+    );
+    const nextIds = nextQuestions.map((q) => q.id);
+    await updateDoc(roomRef, {
+      status: 'waiting',
+      countdownStartedAtMs: 0,
+      raceStartedAtMs: 0,
+      raceFinishedAtMs: 0,
+      winnerId: '',
+      winnerNickname: '',
+      questionIds: nextIds,
+      updatedAt: serverTimestamp(),
+    });
+    return {
+      ...room,
+      status: 'waiting',
+      countdownStartedAtMs: 0,
+      raceStartedAtMs: 0,
+      raceFinishedAtMs: 0,
+      winnerId: '',
+      winnerNickname: '',
+      questionIds: nextIds,
+    };
+  }
+
+  return room;
+}
+
+export async function leaveMultiplayerRoomAndTransferHost(
+  roomCode: string,
+  profile: PlayerProfile
+): Promise<void> {
+  try {
+    const roomRef = doc(db, 'rooms', roomCode);
+    const roomSnap = await getDoc(roomRef);
+    if (!roomSnap.exists()) return;
+    const room = roomSnap.data() as RoomRecord;
+
+    const myPlayerRef = doc(db, 'rooms', roomCode, 'players', profile.uid);
+    await deleteDoc(myPlayerRef).catch(() => {});
+
+    const remainingSnap = await getDocs(
+      query(collection(db, 'rooms', roomCode, 'players'), where('roomCode', '==', roomCode))
+    );
+    const remaining = remainingSnap.docs
+      .map((d) => d.data() as RoomPlayerRecord)
+      .filter((p) => p.playerId !== profile.uid);
+
+    if (room.status === 'waiting' && remaining.length > 0) {
+      remaining.sort((a, b) => a.nickname.localeCompare(b.nickname));
+      const nextHost =
+        room.hostId === profile.uid ? remaining[0] : remaining.find((p) => p.playerId === room.hostId) || remaining[0];
+      await updateDoc(roomRef, {
+        playerCount: Math.max(1, remaining.length),
+        hostId: nextHost.playerId,
+        hostNickname: nextHost.nickname,
+        updatedAt: serverTimestamp(),
+      }).catch(() => {});
+    }
+  } catch {
+    // Non-fatal on leave
+  }
 }
 
 export async function joinMultiplayerRoom(
@@ -718,6 +874,8 @@ export async function joinMultiplayerRoom(
     ready: false,
     distance: 0,
     score: 0,
+    bluffText: '',
+    votedOption: -1,
     correctAnswers: 0,
     wrongAnswers: 0,
     currentQuestionIndex: 0,
@@ -860,6 +1018,12 @@ export async function adminSaveQuestion(
   adminEmail: string,
   questionInput: {
     id?: string;
+    gameId?: TrojoGameId;
+    iqField?: IqRelayField;
+    scrambledLetters?: string;
+    emojiClue?: string;
+    memoryTarget?: string;
+    acceptedAnswers?: string[];
     category: QuestionCategory;
     subcategory?: string;
     difficulty: QuestionDifficulty;
@@ -899,6 +1063,27 @@ export async function adminSaveQuestion(
       updatedAt: serverTimestamp(),
     };
 
+    if (questionInput.gameId) {
+      basePayload.gameId = questionInput.gameId;
+    }
+    if (questionInput.iqField) {
+      basePayload.iqField = questionInput.iqField;
+    }
+    if (questionInput.scrambledLetters !== undefined) {
+      basePayload.scrambledLetters = questionInput.scrambledLetters.trim().slice(0, 60);
+    }
+    if (questionInput.emojiClue !== undefined) {
+      basePayload.emojiClue = questionInput.emojiClue.trim().slice(0, 60);
+    }
+    if (questionInput.memoryTarget !== undefined) {
+      basePayload.memoryTarget = questionInput.memoryTarget.trim().slice(0, 60);
+    }
+    if (questionInput.acceptedAnswers && questionInput.acceptedAnswers.length > 0) {
+      basePayload.acceptedAnswers = questionInput.acceptedAnswers
+        .map((a) => a.trim().toUpperCase().slice(0, 60))
+        .filter(Boolean)
+        .slice(0, 8);
+    }
     if (questionInput.subcategory !== undefined) {
       basePayload.subcategory = questionInput.subcategory.trim().slice(0, 60);
     }

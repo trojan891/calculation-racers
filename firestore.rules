@@ -56,7 +56,7 @@ service cloud.firestore {
       data.wins is int && data.wins >= 0 && data.wins <= 1000000 &&
       data.totalRaces is int && data.totalRaces >= 0 && data.totalRaces <= 1000000 &&
       data.bestTimeMs is int && data.bestTimeMs >= 0 && data.bestTimeMs <= 36000000 &&
-      (!('bestScore' in data) || (data.bestScore is int && data.bestScore >= 0 && data.bestScore <= 10000)) &&
+      (!('bestScore' in data) || (data.bestScore is int && data.bestScore >= 0 && data.bestScore <= 500000)) &&
       data.totalCorrect is int && data.totalCorrect >= 0 && data.totalCorrect <= 20000000 &&
       data.totalWrong is int && data.totalWrong >= 0 && data.totalWrong <= 20000000 &&
       data.isPublicProfile is bool &&
@@ -186,11 +186,21 @@ service cloud.firestore {
         'isActive', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'id', 'category', 'subcategory', 'difficulty', 'questionText', 'options',
+        'id', 'gameId', 'iqField', 'scrambledLetters', 'emojiClue', 'memoryTarget', 'acceptedAnswers',
+        'category', 'subcategory', 'difficulty', 'questionText', 'options',
         'answerHash', 'sourceUrl', 'publishedAt', 'verifiedAt', 'expiresAt',
         'isActive', 'createdAt', 'updatedAt'
       ]) &&
       isValidId(data.id) &&
+      (!('gameId' in data) || (data.gameId is string && data.gameId in [
+        'calculation_racer', 'water_sort', 'word_finder', 'game_2048', 'mahjong_solitaire',
+        'cheat_your_friend', 'solve_the_puzzle', 'word_scramble', 'emoji_decode', 'quick_quiz', 'iq_relay'
+      ])) &&
+      (!('iqField' in data) || (data.iqField is string && data.iqField.size() <= 60)) &&
+      (!('scrambledLetters' in data) || (data.scrambledLetters is string && data.scrambledLetters.size() <= 60)) &&
+      (!('emojiClue' in data) || (data.emojiClue is string && data.emojiClue.size() <= 60)) &&
+      (!('memoryTarget' in data) || (data.memoryTarget is string && data.memoryTarget.size() <= 60)) &&
+      (!('acceptedAnswers' in data) || (data.acceptedAnswers is list && data.acceptedAnswers.size() <= 8)) &&
       data.category is string && data.category in ['math', 'gk', 'science', 'current_affairs'] &&
       (!('subcategory' in data) || (data.subcategory is string && data.subcategory.size() <= 60)) &&
       data.difficulty is string && data.difficulty in ['easy', 'medium', 'hard'] &&
@@ -223,6 +233,7 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly([
+          'gameId', 'iqField', 'scrambledLetters', 'emojiClue', 'memoryTarget', 'acceptedAnswers',
           'category', 'subcategory', 'difficulty', 'questionText', 'options',
           'answerHash', 'sourceUrl', 'publishedAt', 'verifiedAt', 'expiresAt',
           'isActive', 'updatedAt'
@@ -302,8 +313,9 @@ service cloud.firestore {
         'winnerId', 'winnerNickname', 'isPublic', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'roomCode', 'hostId', 'hostNickname', 'maxPlayers', 'category', 'difficulty',
-        'subcategories', 'questionCount', 'questionTimeLimitSec', 'status', 'questionIds', 'playerCount',
+        'roomCode', 'hostId', 'hostNickname', 'maxPlayers', 'gameId', 'iqFields',
+        'category', 'difficulty', 'subcategories', 'questionCount',
+        'questionTimeLimitSec', 'status', 'questionIds', 'playerCount',
         'countdownStartedAtMs', 'raceStartedAtMs', 'raceFinishedAtMs',
         'winnerId', 'winnerNickname', 'isPublic', 'createdAt', 'updatedAt'
       ]) &&
@@ -311,13 +323,18 @@ service cloud.firestore {
       isValidId(data.hostId) &&
       data.hostNickname is string && data.hostNickname.size() >= 2 && data.hostNickname.size() <= 20 &&
       data.maxPlayers is int && data.maxPlayers in [2, 4] &&
+      (!('gameId' in data) || (data.gameId is string && data.gameId in [
+        'calculation_racer', 'water_sort', 'word_finder', 'game_2048', 'mahjong_solitaire',
+        'cheat_your_friend', 'solve_the_puzzle', 'word_scramble', 'emoji_decode', 'quick_quiz', 'iq_relay'
+      ])) &&
+      (!('iqFields' in data) || (data.iqFields is list && data.iqFields.size() >= 1 && data.iqFields.size() <= 10)) &&
       data.category is string && data.category in ['math', 'gk', 'science', 'current_affairs'] &&
       data.difficulty is string && data.difficulty in ['easy', 'medium', 'hard'] &&
       (!('subcategories' in data) || (data.subcategories is list && data.subcategories.size() <= 10)) &&
-      (!('questionCount' in data) || (data.questionCount is int && data.questionCount in [10, 15, 20])) &&
+      (!('questionCount' in data) || (data.questionCount is int && data.questionCount in [5, 6, 8, 10, 12, 15, 20])) &&
       data.questionTimeLimitSec is int && data.questionTimeLimitSec >= 5 && data.questionTimeLimitSec <= 60 &&
       data.status is string && data.status in ['waiting', 'countdown', 'racing', 'finished', 'abandoned'] &&
-      data.questionIds is list && data.questionIds.size() >= 1 && data.questionIds.size() <= 20 &&
+      data.questionIds is list && data.questionIds.size() >= 1 && data.questionIds.size() <= 25 &&
       data.questionIds[0] is string && data.questionIds[0].size() <= 128 &&
       data.playerCount is int && data.playerCount >= 1 && data.playerCount <= 4 &&
       data.countdownStartedAtMs is int && data.countdownStartedAtMs >= 0 &&
@@ -343,28 +360,38 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/profiles/$(request.auth.uid));
       allow update: if isVerifiedUser() && isValidRoomCode(roomCode) && isValidRoom(incoming()) && (
         isAdmin() || (
-          existing().status in ['waiting', 'countdown', 'racing'] &&
           incoming().roomCode == existing().roomCode &&
-          incoming().hostId == existing().hostId &&
           incoming().createdAt == existing().createdAt &&
           incoming().updatedAt == request.time &&
           (
-            // Action 1: Player joins/leaves room while waiting
+            // Action 1: Player joins/leaves room or transfers host while waiting
             (
               existing().status == 'waiting' &&
-              incoming().diff(existing()).affectedKeys().hasOnly(['playerCount', 'updatedAt']) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['playerCount', 'hostId', 'hostNickname', 'updatedAt']) &&
               incoming().playerCount <= existing().maxPlayers
             ) ||
             // Action 2: Host transitions waiting -> countdown -> racing
             (
               existing().hostId == request.auth.uid &&
+              existing().status in ['waiting', 'countdown', 'racing'] &&
               incoming().diff(existing()).affectedKeys().hasOnly(['status', 'countdownStartedAtMs', 'raceStartedAtMs', 'questionIds', 'updatedAt'])
             ) ||
-            // Action 3: Room finishes when a player crosses the finish line or race completes
+            // Action 3: Room finishes when a player crosses the finish line or game completes
             (
+              existing().status in ['waiting', 'countdown', 'racing'] &&
               exists(/databases/$(database)/documents/rooms/$(roomCode)/players/$(request.auth.uid)) &&
               incoming().diff(existing()).affectedKeys().hasOnly(['status', 'raceFinishedAtMs', 'winnerId', 'winnerNickname', 'updatedAt']) &&
               incoming().status in ['finished', 'abandoned']
+            ) ||
+            // Action 4: Replay With Same Players (Rematch reset by room member/host)
+            (
+              existing().status == 'finished' &&
+              exists(/databases/$(database)/documents/rooms/$(roomCode)/players/$(request.auth.uid)) &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'status', 'countdownStartedAtMs', 'raceStartedAtMs', 'raceFinishedAtMs',
+                'winnerId', 'winnerNickname', 'questionIds', 'updatedAt'
+              ]) &&
+              incoming().status in ['waiting', 'countdown']
             )
           )
         )
@@ -381,7 +408,8 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'roomCode', 'playerId', 'nickname', 'carColor', 'ready',
-          'distance', 'score', 'correctAnswers', 'wrongAnswers', 'currentQuestionIndex',
+          'distance', 'score', 'bluffText', 'votedOption',
+          'correctAnswers', 'wrongAnswers', 'currentQuestionIndex',
           'finished', 'finishTimeMs', 'placement', 'connected', 'lastSeenAtMs',
           'joinedAt', 'updatedAt'
         ]) &&
@@ -391,10 +419,12 @@ service cloud.firestore {
         data.carColor is string && data.carColor in ['blue', 'red', 'green', 'purple'] &&
         data.ready is bool &&
         data.distance is int && data.distance >= 0 && data.distance <= 100 &&
-        (!('score' in data) || (data.score is int && data.score >= 0 && data.score <= 200)) &&
-        data.correctAnswers is int && data.correctAnswers >= 0 && data.correctAnswers <= 20 &&
-        data.wrongAnswers is int && data.wrongAnswers >= 0 && data.wrongAnswers <= 20 &&
-        data.currentQuestionIndex is int && data.currentQuestionIndex >= 0 && data.currentQuestionIndex <= 20 &&
+        (!('score' in data) || (data.score is int && data.score >= 0 && data.score <= 500000)) &&
+        (!('bluffText' in data) || (data.bluffText is string && data.bluffText.size() <= 120)) &&
+        (!('votedOption' in data) || (data.votedOption is int && data.votedOption >= -1 && data.votedOption <= 6)) &&
+        data.correctAnswers is int && data.correctAnswers >= 0 && data.correctAnswers <= 500 &&
+        data.wrongAnswers is int && data.wrongAnswers >= 0 && data.wrongAnswers <= 500 &&
+        data.currentQuestionIndex is int && data.currentQuestionIndex >= 0 && data.currentQuestionIndex <= 500 &&
         data.finished is bool &&
         data.finishTimeMs is int && data.finishTimeMs >= 0 && data.finishTimeMs <= 36000000 &&
         data.placement is int && data.placement >= 0 && data.placement <= 4 &&
@@ -436,20 +466,26 @@ service cloud.firestore {
                 (
                   incoming().diff(existing()).affectedKeys().hasOnly(['ready', 'carColor', 'connected', 'lastSeenAtMs', 'updatedAt'])
                 ) ||
-                // Action 2: Advance question progress and car position during active race
+                // Action 2: Advance question progress, bluff/vote, and score during active game
                 (
                   existing().finished == false &&
                   incoming().diff(existing()).affectedKeys().hasOnly([
-                    'distance', 'score', 'correctAnswers', 'wrongAnswers', 'currentQuestionIndex',
+                    'distance', 'score', 'bluffText', 'votedOption',
+                    'correctAnswers', 'wrongAnswers', 'currentQuestionIndex',
                     'finished', 'finishTimeMs', 'placement', 'connected', 'lastSeenAtMs', 'updatedAt'
                   ]) &&
-                  incoming().currentQuestionIndex == existing().currentQuestionIndex + 1 &&
+                  incoming().currentQuestionIndex >= existing().currentQuestionIndex &&
+                  incoming().currentQuestionIndex <= existing().currentQuestionIndex + 10 &&
                   incoming().distance >= 0 &&
                   incoming().distance <= 100
                 ) ||
-                // Action 3: Assign final placement
+                // Action 3: Assign final placement or reset for Rematch
                 (
-                  incoming().diff(existing()).affectedKeys().hasOnly(['placement', 'finished', 'finishTimeMs', 'updatedAt'])
+                  incoming().diff(existing()).affectedKeys().hasOnly([
+                    'ready', 'distance', 'score', 'bluffText', 'votedOption',
+                    'correctAnswers', 'wrongAnswers', 'currentQuestionIndex',
+                    'placement', 'finished', 'finishTimeMs', 'connected', 'lastSeenAtMs', 'updatedAt'
+                  ])
                 )
               )
             )
@@ -502,7 +538,7 @@ service cloud.firestore {
         'isPublic', 'completedAtMs', 'createdAt'
       ]) &&
       data.keys().hasOnly([
-        'roomCode', 'playerId', 'nickname', 'carColor', 'mode',
+        'roomCode', 'playerId', 'nickname', 'carColor', 'mode', 'gameId',
         'category', 'difficulty', 'placement', 'score', 'correctAnswers',
         'wrongAnswers', 'accuracy', 'distance', 'durationMs',
         'isPublic', 'completedAtMs', 'createdAt'
@@ -512,12 +548,16 @@ service cloud.firestore {
       data.nickname is string && data.nickname.size() >= 2 && data.nickname.size() <= 20 &&
       data.carColor is string && data.carColor in ['blue', 'red', 'green', 'purple'] &&
       data.mode is string && data.mode in ['solo', '2p', '4p', 'timed'] &&
+      (!('gameId' in data) || (data.gameId is string && data.gameId in [
+        'calculation_racer', 'water_sort', 'word_finder', 'game_2048', 'mahjong_solitaire',
+        'cheat_your_friend', 'solve_the_puzzle', 'word_scramble', 'emoji_decode', 'quick_quiz', 'iq_relay'
+      ])) &&
       data.category is string && data.category in ['math', 'gk', 'science', 'current_affairs'] &&
       data.difficulty is string && data.difficulty in ['easy', 'medium', 'hard'] &&
       data.placement is int && data.placement >= 1 && data.placement <= 4 &&
-      (!('score' in data) || (data.score is int && data.score >= 0 && data.score <= 200)) &&
-      data.correctAnswers is int && data.correctAnswers >= 0 && data.correctAnswers <= 20 &&
-      data.wrongAnswers is int && data.wrongAnswers >= 0 && data.wrongAnswers <= 20 &&
+      (!('score' in data) || (data.score is int && data.score >= 0 && data.score <= 500000)) &&
+      data.correctAnswers is int && data.correctAnswers >= 0 && data.correctAnswers <= 500 &&
+      data.wrongAnswers is int && data.wrongAnswers >= 0 && data.wrongAnswers <= 500 &&
       data.accuracy is int && data.accuracy >= 0 && data.accuracy <= 100 &&
       data.distance is int && data.distance >= 0 && data.distance <= 100 &&
       data.durationMs is int && data.durationMs >= 0 && data.durationMs <= 36000000 &&

@@ -12,17 +12,16 @@ import {
 import {
   AlertTriangle,
   Award,
+  Brain,
   Check,
   CheckCircle2,
   Clock,
   Copy,
   Download,
-  Flag,
+  Gamepad2,
   MessageCircle,
   RotateCcw,
-  Send,
   Share2,
-  SlidersHorizontal,
   Sparkles,
   Trophy,
   X,
@@ -34,6 +33,9 @@ import {
   CATEGORY_LABELS,
   DIFFICULTY_LABELS,
   GameMode,
+  IQ_RELAY_ALL_FIELDS,
+  IqFieldPerformance,
+  IqRelayField,
   OperationType,
   PlayerProfile,
   QuestionCategory,
@@ -41,6 +43,8 @@ import {
   QuestionItem,
   RoomPlayerRecord,
   RoomRecord,
+  TROJO_GAME_MAP,
+  TrojoGameId,
 } from '../game/types';
 import { RaceTrackCanvas, TrackRacer } from '../game/RaceTrackCanvas';
 import {
@@ -58,6 +62,7 @@ import {
 } from '../lib/shareUtils';
 
 interface RaceArenaPageProps {
+  gameId?: TrojoGameId;
   mode: GameMode;
   category: QuestionCategory;
   difficulty: QuestionDifficulty;
@@ -68,7 +73,8 @@ interface RaceArenaPageProps {
   roomCode?: string;
   initialRoom?: RoomRecord | null;
   initialPlayers?: RoomPlayerRecord[];
-  onSaveLocalGuestResult?: (result: {
+  onSaveLocalGuestResult: (result: {
+    gameId: TrojoGameId;
     category: QuestionCategory;
     difficulty: QuestionDifficulty;
     mode: GameMode;
@@ -81,12 +87,15 @@ interface RaceArenaPageProps {
     completedAtMs: number;
   }) => void;
   onPlayAgain: () => void;
+  onReplayMultiplayer?: (roomCode: string) => Promise<void>;
+  onPlayMoreGames: () => void;
   onChangeSettings: () => void;
   onOpenLeaderboard: () => void;
   onExitToHome: () => void;
 }
 
 export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
+  gameId: propGameId,
   mode,
   category,
   difficulty,
@@ -99,61 +108,84 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
   initialPlayers = [],
   onSaveLocalGuestResult,
   onPlayAgain,
-  onChangeSettings,
+  onReplayMultiplayer,
+  onPlayMoreGames,
   onOpenLeaderboard,
-  onExitToHome,
 }) => {
   const isMultiplayer = (mode === '2p' || mode === '4p') && Boolean(roomCode);
-  const totalQuestions = Math.max(1, questions.length);
+  const [room, setRoom] = useState<RoomRecord | null>(initialRoom || null);
+  const [roomPlayers, setRoomPlayers] = useState<RoomPlayerRecord[]>(initialPlayers);
 
-  // Solo / local state
+  const activeGameId: TrojoGameId =
+    room?.gameId || propGameId || 'calculation_racer';
+  const gameInfo = TROJO_GAME_MAP[activeGameId] || TROJO_GAME_MAP.calculation_racer;
+
+  // Player game state
   const [questionIndex, setQuestionIndex] = useState(0);
   const [distance, setDistance] = useState(0);
   const [score, setScore] = useState(0);
   const [correctCount, setCorrectCount] = useState(0);
   const [wrongCount, setWrongCount] = useState(0);
-  const [raceFinished, setRaceFinished] = useState(false);
-  const [raceStartTimeMs] = useState<number>(() => Date.now());
+  const [raceStartedAtMs] = useState<number>(() => Date.now());
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [raceFinished, setRaceFinished] = useState(false);
+
+  // Per-question countdown timer (delta-time accurate)
   const effectiveTimeLimitSec = Math.max(5, Number(questionTimeLimitSec) || 20);
   const [questionTimeLeft, setQuestionTimeLeft] = useState(effectiveTimeLimitSec);
   const [questionTimeProgressPct, setQuestionTimeProgressPct] = useState(100);
+  const remainingMsRef = useRef<number>(effectiveTimeLimitSec * 1000);
+  const lastTickBookmarkRef = useRef<number>(Date.now());
+  const lastBeepSecRef = useRef<number>(-1);
+  const questionStartMsRef = useRef<number>(Date.now());
 
-  // Per-question submission feedback state
-  const [submitting, setSubmitting] = useState(false);
+  // Game-specific interactive states
+  const [typedAnswer, setTypedAnswer] = useState('');
+  const [bluffInput, setBluffInput] = useState('');
+  const [bluffSubmitted, setBluffSubmitted] = useState(false);
+  const [iqRoundHistory, setIqRoundHistory] = useState<
+    { field: IqRelayField; isCorrect: boolean; timeTakenMs: number }[]
+  >([]);
+
+  // Answer feedback state
   const [feedback, setFeedback] = useState<{
     selectedOption: number;
     correctOption: number;
     isCorrect: boolean;
-    delta: -5 | 0 | 10;
-    pointsDelta: number;
     explanation: string;
+    pointsDelta: number;
+    bluffBonus?: number;
   } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [rematchBusy, setRematchBusy] = useState(false);
+  const [rematchError, setRematchError] = useState<string | null>(null);
+  const savedResultRef = useRef(false);
 
-  // Multiplayer synchronized state
-  const [room, setRoom] = useState<RoomRecord | null>(initialRoom || null);
-  const [mpPlayers, setMpPlayers] = useState<RoomPlayerRecord[]>(initialPlayers);
-
-  // Report question modal state
-  const [reportingQuestion, setReportingQuestion] = useState<QuestionItem | null>(null);
+  // Question Report Modal State
+  const [reportingQuestion, setReportingQuestion] = useState<QuestionItem | null>(
+    null
+  );
   const [reportReason, setReportReason] = useState('');
-  const [reportStatusMsg, setReportStatusMsg] = useState<string | null>(null);
+  const [reportSubmitted, setReportSubmitted] = useState(false);
 
-  // Share Score modal & visual card state
+  // Share Score Modal State (Strictly WhatsApp & Instagram)
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [scoreCardDataUrl, setScoreCardDataUrl] = useState<string>('');
   const [scoreCardBlob, setScoreCardBlob] = useState<Blob | null>(null);
   const [generatingCard, setGeneratingCard] = useState(false);
   const [shareToast, setShareToast] = useState<string | null>(null);
 
-  const savedResultRef = useRef(false);
-  const questionStartMsRef = useRef<number>(Date.now());
-  const remainingMsRef = useRef<number>(effectiveTimeLimitSec * 1000);
-  const lastTickMsRef = useRef<number>(performance.now());
-  const lastBeepSecRef = useRef<number>(-1);
-  const lockedQuestionIdxRef = useRef<number>(-1);
+  const currentQuestion = questions[questionIndex] || null;
+  const totalQuestions = questions.length;
 
-  // Subscribe to Multiplayer Room & Players if in 2P/4P mode
+  // Reset interactive inputs on each new question
+  useEffect(() => {
+    setTypedAnswer('');
+    setBluffInput('');
+    setBluffSubmitted(false);
+  }, [questionIndex]);
+
+  // Subscribe to multiplayer room & players
   useEffect(() => {
     if (!isMultiplayer || !roomCode) return;
 
@@ -179,450 +211,574 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
       qPlayers,
       (snap) => {
         const list = snap.docs.map((d) => d.data() as RoomPlayerRecord);
-        setMpPlayers(list);
-        const me = list.find((p) => p.playerId === profile.uid);
-        if (me) {
-          setDistance(me.distance);
-          if (me.score !== undefined) setScore(me.score);
-          setCorrectCount(me.correctAnswers);
-          setWrongCount(me.wrongAnswers);
-          if (me.currentQuestionIndex > questionIndex && !feedback) {
-            setQuestionIndex(me.currentQuestionIndex);
-          }
-          if (me.finished) {
-            setRaceFinished(true);
-          }
-        }
+        setRoomPlayers(list);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, `rooms/${roomCode}/players`)
+      (err) =>
+        handleFirestoreError(err, OperationType.LIST, `rooms/${roomCode}/players`)
     );
 
     return () => {
       unsubRoom();
       unsubPlayers();
     };
-  }, [isMultiplayer, roomCode, profile.uid, questionIndex, feedback]);
+  }, [isMultiplayer, roomCode]);
 
-  // Overall race elapsed timer
+  // Elapsed race clock
   useEffect(() => {
     if (raceFinished) return;
-    const timer = setInterval(() => {
-      const baseStart =
-        isMultiplayer && room?.raceStartedAtMs ? room.raceStartedAtMs : raceStartTimeMs;
-      setElapsedMs(Math.max(0, Date.now() - baseStart));
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const elapsed = now - raceStartedAtMs;
+      setElapsedMs(elapsed);
+
+      if (mode === 'timed' && elapsed >= 60000) {
+        setRaceFinished(true);
+        clearInterval(interval);
+      }
     }, 100);
-    return () => clearInterval(timer);
-  }, [raceFinished, isMultiplayer, room?.raceStartedAtMs, raceStartTimeMs]);
+    return () => clearInterval(interval);
+  }, [raceFinished, raceStartedAtMs, mode]);
 
-  const currentQuestion = questions[questionIndex] || null;
+  const finishRaceSession = useCallback(
+    async (
+      finalDistance: number,
+      finalScore: number,
+      finalCorrect: number,
+      finalWrong: number,
+      finalDurationMs: number
+    ) => {
+      if (savedResultRef.current) return;
+      savedResultRef.current = true;
+      setRaceFinished(true);
+      soundEngine.playVictory();
 
-  // Handle Answer Submission (or -1 for timeout)
-  const handleSelectOption = useCallback(
-    async (selectedOption: number) => {
-      if (
-        raceFinished ||
-        submitting ||
-        feedback !== null ||
-        !currentQuestion ||
-        lockedQuestionIdxRef.current === questionIndex
-      ) {
+      const totalAnswered = finalCorrect + finalWrong;
+      const accuracy =
+        totalAnswered > 0 ? Math.round((finalCorrect / totalAnswered) * 100) : 0;
+
+      let placement = 1;
+      if (isMultiplayer && roomPlayers.length > 0) {
+        const betterPlayers = roomPlayers.filter(
+          (p) =>
+            p.playerId !== profile.uid &&
+            ((p.score || 0) > finalScore ||
+              ((p.score || 0) === finalScore && p.distance > finalDistance))
+        );
+        placement = Math.min(4, betterPlayers.length + 1);
+      }
+
+      if (isGuest) {
+        onSaveLocalGuestResult({
+          gameId: activeGameId,
+          category,
+          difficulty,
+          mode,
+          score: finalScore,
+          correctAnswers: finalCorrect,
+          wrongAnswers: finalWrong,
+          accuracy,
+          distance: finalDistance,
+          durationMs: finalDurationMs,
+          completedAtMs: Date.now(),
+        });
         return;
       }
 
-      lockedQuestionIdxRef.current = questionIndex;
-      setSubmitting(true);
-      const timeTakenMs = Math.max(0, Date.now() - questionStartMsRef.current);
-      const remainingSecAtSubmit = Math.max(
-        0,
-        questionTimeLimitSec - timeTakenMs / 1000
-      );
-
-      try {
-        const evaluation = await resolveQuestionAnswer(currentQuestion, selectedOption);
-        const nextDistance = Math.min(100, Math.max(0, distance + evaluation.distanceDelta));
-        const speedBonus = evaluation.isCorrect
-          ? Math.max(
-              0,
-              Math.min(
-                5,
-                Math.ceil((remainingSecAtSubmit / Math.max(1, questionTimeLimitSec)) * 5)
-              )
-            )
-          : 0;
-        const pointsDelta = evaluation.isCorrect
-          ? 10 + speedBonus
-          : selectedOption === -1
-            ? 0
-            : -2;
-        const nextScore = Math.min(200, Math.max(0, score + pointsDelta));
-
-        const nextCorrect = correctCount + (evaluation.isCorrect ? 1 : 0);
-        const nextWrong = wrongCount + (!evaluation.isCorrect ? 1 : 0);
-        const nextQuestionIndex = questionIndex + 1;
-        const reachedFinish = nextDistance >= 100 || nextQuestionIndex >= totalQuestions;
-
-        if (evaluation.isCorrect) {
-          soundEngine.playAccelerate();
-        } else {
-          soundEngine.playBrakeWrong();
-        }
-
-        setDistance(nextDistance);
-        setScore(nextScore);
-        setCorrectCount(nextCorrect);
-        setWrongCount(nextWrong);
-        setFeedback({
-          selectedOption,
-          correctOption: evaluation.correctOption,
-          isCorrect: evaluation.isCorrect,
-          delta: evaluation.distanceDelta,
-          pointsDelta,
-          explanation: evaluation.explanation,
-        });
-
-        // If Multiplayer, write immutable submission + update RoomPlayer
-        if (isMultiplayer && roomCode) {
-          const submissionId = `${profile.uid}_q${questionIndex}`;
-          await setDoc(doc(db, 'rooms', roomCode, 'submissions', submissionId), {
-            roomCode,
-            playerId: profile.uid,
-            questionId: currentQuestion.id,
-            questionIndex,
-            selectedOption,
-            isCorrect: evaluation.isCorrect,
-            distanceDelta: evaluation.distanceDelta,
-            timeTakenMs: Math.min(120000, timeTakenMs),
-            createdAt: serverTimestamp(),
-          }).catch(() => {});
-
-          const baseStart = room?.raceStartedAtMs || raceStartTimeMs;
-          const finishDuration = Math.max(0, Date.now() - baseStart);
-
-          await updateDoc(doc(db, 'rooms', roomCode, 'players', profile.uid), {
-            distance: nextDistance,
-            score: nextScore,
-            correctAnswers: nextCorrect,
-            wrongAnswers: nextWrong,
-            currentQuestionIndex: nextQuestionIndex,
-            finished: reachedFinish,
-            finishTimeMs: reachedFinish ? finishDuration : 0,
-            placement: nextDistance >= 100 && !room?.winnerId ? 1 : 0,
-            connected: true,
-            lastSeenAtMs: Date.now(),
-            updatedAt: serverTimestamp(),
-          });
-
-          // If this player crossed the 100m finish line first, mark the room finished!
-          if (nextDistance >= 100 && room && room.status === 'racing' && !room.winnerId) {
-            await updateDoc(doc(db, 'rooms', roomCode), {
-              status: 'finished',
-              raceFinishedAtMs: Date.now(),
-              winnerId: profile.uid,
-              winnerNickname: profile.nickname,
-              updatedAt: serverTimestamp(),
-            }).catch(() => {});
-          }
-        }
-
-        // Advance to next question or conclude race after brief feedback pause
-        setTimeout(() => {
-          setFeedback(null);
-          setSubmitting(false);
-          if (reachedFinish) {
-            setRaceFinished(true);
-            soundEngine.playVictory();
-          } else {
-            questionStartMsRef.current = Date.now();
-            remainingMsRef.current = effectiveTimeLimitSec * 1000;
-            lastTickMsRef.current = performance.now();
-            lastBeepSecRef.current = -1;
-            setQuestionTimeLeft(effectiveTimeLimitSec);
-            setQuestionTimeProgressPct(100);
-            setQuestionIndex(nextQuestionIndex);
-          }
-        }, 1250);
-      } catch (err) {
-        setSubmitting(false);
-        lockedQuestionIdxRef.current = -1;
-        console.error(err);
-      }
+      await recordRaceCompletionAndStats(profile, {
+        roomCode: roomCode || `solo_${Date.now()}`,
+        playerId: profile.uid,
+        nickname: profile.nickname,
+        carColor: profile.carColor,
+        mode,
+        gameId: activeGameId,
+        category,
+        difficulty,
+        placement,
+        score: finalScore,
+        correctAnswers: finalCorrect,
+        wrongAnswers: finalWrong,
+        accuracy,
+        distance: finalDistance,
+        durationMs: finalDurationMs,
+        isPublic: profile.isPublicProfile,
+        completedAtMs: Date.now(),
+      });
     },
     [
-      raceFinished,
-      submitting,
-      feedback,
-      currentQuestion,
-      questionIndex,
-      distance,
-      score,
-      correctCount,
-      wrongCount,
-      totalQuestions,
       isMultiplayer,
+      roomPlayers,
+      profile,
+      isGuest,
+      onSaveLocalGuestResult,
+      activeGameId,
+      category,
+      difficulty,
+      mode,
       roomCode,
-      profile.uid,
-      profile.nickname,
-      room,
-      raceStartTimeMs,
-      questionTimeLimitSec,
     ]
   );
 
+  // Trigger final result saving if multiplayer room finishes externally
+  useEffect(() => {
+    if (raceFinished && !savedResultRef.current) {
+      finishRaceSession(
+        distance,
+        score,
+        correctCount,
+        wrongCount,
+        Date.now() - raceStartedAtMs
+      );
+    }
+  }, [
+    raceFinished,
+    distance,
+    score,
+    correctCount,
+    wrongCount,
+    raceStartedAtMs,
+    finishRaceSession,
+  ]);
+
+  const handleSubmitBluff = async (customBluff?: string) => {
+    const text = (customBluff ?? bluffInput).trim().slice(0, 80);
+    if (!text) return;
+    soundEngine.playClick();
+    setBluffInput(text);
+    setBluffSubmitted(true);
+    if (isMultiplayer && roomCode) {
+      updateDoc(doc(db, 'rooms', roomCode, 'players', profile.uid), {
+        distance,
+        score,
+        bluffText: text,
+        votedOption: -1,
+        correctAnswers: correctCount,
+        wrongAnswers: wrongCount,
+        currentQuestionIndex: questionIndex,
+        finished: false,
+        finishTimeMs: 0,
+        placement: 0,
+        connected: true,
+        lastSeenAtMs: Date.now(),
+        updatedAt: serverTimestamp(),
+      }).catch(() => {});
+    }
+  };
+
+  const handleSelectOption = async (selectedOption: number) => {
+    if (!currentQuestion || submitting || feedback !== null || raceFinished) {
+      return;
+    }
+    setSubmitting(true);
+
+    const timeTakenMs = Math.min(
+      120000,
+      Math.max(0, Date.now() - questionStartMsRef.current)
+    );
+
+    const resolved = await resolveQuestionAnswer(currentQuestion, selectedOption);
+    const isCorrect = resolved.isCorrect;
+
+    // Calculate game-appropriate movement & score
+    const distanceDelta: -5 | 0 | 10 = isCorrect ? 10 : -5;
+    const nextDistance = Math.min(100, Math.max(0, distance + distanceDelta));
+
+    // Modest capped speed bonus (+0 to +5 pts) for Solve the Puzzle, Word Scramble, Emoji Decode, and IQ Relay
+    const supportsSpeedBonus =
+      activeGameId === 'solve_the_puzzle' ||
+      activeGameId === 'word_scramble' ||
+      activeGameId === 'emoji_decode' ||
+      activeGameId === 'iq_relay';
+    const speedBonus =
+      isCorrect && supportsSpeedBonus
+        ? Math.min(
+            5,
+            Math.max(
+              1,
+              Math.round((questionTimeLeft / effectiveTimeLimitSec) * 5)
+            )
+          )
+        : 0;
+
+    // Bluff bonus (+5 pts) in Cheat Your Friend when player submits a plausible bluff
+    const bluffBonus =
+      activeGameId === 'cheat_your_friend' && bluffSubmitted ? 5 : 0;
+
+    const pointsDelta = (isCorrect ? 10 + speedBonus : 0) + bluffBonus;
+    const nextScore = score + pointsDelta;
+    const nextCorrect = correctCount + (isCorrect ? 1 : 0);
+    const nextWrong = wrongCount + (isCorrect ? 0 : 1);
+    const nextQuestionIndex = questionIndex + 1;
+
+    // Track IQ Relay field performance
+    if (activeGameId === 'iq_relay') {
+      const activeField: IqRelayField =
+        currentQuestion.iqField ||
+        (currentQuestion.subcategory as IqRelayField) ||
+        IQ_RELAY_ALL_FIELDS[questionIndex % IQ_RELAY_ALL_FIELDS.length];
+      setIqRoundHistory((prev) => [
+        ...prev,
+        { field: activeField, isCorrect, timeTakenMs },
+      ]);
+    }
+
+    if (isCorrect) {
+      soundEngine.playAccelerate();
+    } else {
+      soundEngine.playBrakeWrong();
+    }
+
+    setDistance(nextDistance);
+    setScore(nextScore);
+    setCorrectCount(nextCorrect);
+    setWrongCount(nextWrong);
+    setFeedback({
+      selectedOption,
+      correctOption: resolved.correctOption,
+      isCorrect,
+      explanation: resolved.explanation,
+      pointsDelta,
+      bluffBonus,
+    });
+
+    const crossedFinishLine =
+      activeGameId === 'calculation_racer' && nextDistance >= 100;
+    const exhaustedQuestions = nextQuestionIndex >= totalQuestions;
+    const nowFinished = crossedFinishLine || exhaustedQuestions;
+    const finalDurationMs = Date.now() - raceStartedAtMs;
+
+    // Sync multiplayer state to Firestore
+    if (isMultiplayer && roomCode) {
+      const submissionId = `${profile.uid}_q_${questionIndex}`;
+      try {
+        if (selectedOption >= -1 && selectedOption <= 3) {
+          await setDoc(
+            doc(db, 'rooms', roomCode, 'submissions', submissionId),
+            {
+              roomCode,
+              playerId: profile.uid,
+              questionId: currentQuestion.id,
+              questionIndex,
+              selectedOption,
+              isCorrect,
+              distanceDelta,
+              timeTakenMs,
+              createdAt: serverTimestamp(),
+            }
+          );
+        }
+
+        const finishedPeers = roomPlayers.filter(
+          (p) => p.playerId !== profile.uid && p.finished
+        ).length;
+        const myPlacement = nowFinished ? Math.min(4, finishedPeers + 1) : 0;
+
+        await updateDoc(doc(db, 'rooms', roomCode, 'players', profile.uid), {
+          distance: nextDistance,
+          score: nextScore,
+          bluffText: bluffInput.slice(0, 80),
+          votedOption: selectedOption,
+          correctAnswers: nextCorrect,
+          wrongAnswers: nextWrong,
+          currentQuestionIndex: nextQuestionIndex,
+          finished: nowFinished,
+          finishTimeMs: nowFinished ? finalDurationMs : 0,
+          placement: myPlacement,
+          connected: true,
+          lastSeenAtMs: Date.now(),
+          updatedAt: serverTimestamp(),
+        });
+
+        if (
+          (crossedFinishLine ||
+            (nowFinished &&
+              roomPlayers.every(
+                (p) => p.playerId === profile.uid || p.finished
+              ))) &&
+          room &&
+          room.status === 'racing'
+        ) {
+          await updateDoc(doc(db, 'rooms', roomCode), {
+            status: 'finished',
+            raceFinishedAtMs: Date.now(),
+            winnerId: profile.uid,
+            winnerNickname: profile.nickname,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      } catch (error) {
+        handleFirestoreError(
+          error,
+          OperationType.WRITE,
+          `rooms/${roomCode}/players/${profile.uid}`
+        );
+      }
+    }
+
+    setTimeout(() => {
+      setFeedback(null);
+      setSubmitting(false);
+      if (nowFinished) {
+        finishRaceSession(
+          nextDistance,
+          nextScore,
+          nextCorrect,
+          nextWrong,
+          finalDurationMs
+        );
+      } else {
+        setQuestionIndex(nextQuestionIndex);
+      }
+    }, 1250);
+  };
+
+  const handleTypedAnswerSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentQuestion || feedback !== null || submitting) return;
+    const cleanInput = typedAnswer.trim().toUpperCase();
+    if (!cleanInput) return;
+
+    const correctIdx = currentQuestion.correctOption ?? 0;
+    const correctOptionText = (
+      currentQuestion.options[correctIdx] || ''
+    )
+      .trim()
+      .toUpperCase();
+    const accepted = (currentQuestion.acceptedAnswers || []).map((a) =>
+      a.trim().toUpperCase()
+    );
+
+    if (cleanInput === correctOptionText || accepted.includes(cleanInput)) {
+      handleSelectOption(correctIdx);
+      return;
+    }
+
+    const matchingIdx = currentQuestion.options.findIndex(
+      (opt) => opt.trim().toUpperCase() === cleanInput
+    );
+    if (matchingIdx !== -1) {
+      handleSelectOption(matchingIdx);
+    } else {
+      const wrongIdx = (correctIdx + 1) % 4;
+      handleSelectOption(wrongIdx);
+    }
+  };
+
+  // Keep latest handler ref for per-question timeout
   const handleSelectOptionRef = useRef(handleSelectOption);
   useEffect(() => {
     handleSelectOptionRef.current = handleSelectOption;
-  }, [handleSelectOption]);
+  });
 
-  // Reset question timer state whenever questionIndex or effectiveTimeLimitSec changes
+  // Reset per-question timer when questionIndex changes
   useEffect(() => {
-    questionStartMsRef.current = Date.now();
-    remainingMsRef.current = effectiveTimeLimitSec * 1000;
-    lastTickMsRef.current = performance.now();
+    const limitMs = effectiveTimeLimitSec * 1000;
+    remainingMsRef.current = limitMs;
+    lastTickBookmarkRef.current = Date.now();
     lastBeepSecRef.current = -1;
+    questionStartMsRef.current = Date.now();
     setQuestionTimeLeft(effectiveTimeLimitSec);
     setQuestionTimeProgressPct(100);
-  }, [questionIndex, effectiveTimeLimitSec, questions]);
+  }, [questionIndex, effectiveTimeLimitSec]);
 
-  // Per-question countdown timer (ticks smoothly every 100ms, pauses when reportingQuestion modal is open)
+  // Active per-question countdown timer loop
   useEffect(() => {
     if (
       raceFinished ||
       feedback !== null ||
       submitting ||
+      !currentQuestion ||
       reportingQuestion !== null
     ) {
+      lastTickBookmarkRef.current = Date.now();
       return;
     }
 
-    lastTickMsRef.current = performance.now();
+    lastTickBookmarkRef.current = Date.now();
+    const limitMs = effectiveTimeLimitSec * 1000;
 
-    const interval = setInterval(() => {
-      const now = performance.now();
-      const deltaMs = Math.max(0, Math.min(500, now - lastTickMsRef.current));
-      lastTickMsRef.current = now;
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const deltaMs = Math.max(0, now - lastTickBookmarkRef.current);
+      lastTickBookmarkRef.current = now;
 
       remainingMsRef.current = Math.max(0, remainingMsRef.current - deltaMs);
-      const remainingExactSec = remainingMsRef.current / 1000;
-      const remainingWholeSec = Math.max(0, Math.ceil(remainingExactSec));
-
-      setQuestionTimeLeft(remainingWholeSec);
-      setQuestionTimeProgressPct(
-        Math.max(
-          0,
-          Math.min(100, (remainingExactSec / effectiveTimeLimitSec) * 100)
-        )
+      const secLeft = Math.ceil(remainingMsRef.current / 1000);
+      const pct = Math.max(
+        0,
+        Math.min(100, (remainingMsRef.current / limitMs) * 100)
       );
 
-      if (
-        remainingWholeSec > 0 &&
-        remainingWholeSec <= 3 &&
-        lastBeepSecRef.current !== remainingWholeSec
-      ) {
-        lastBeepSecRef.current = remainingWholeSec;
-        soundEngine.playCountdownTick();
+      setQuestionTimeLeft(secLeft);
+      setQuestionTimeProgressPct(pct);
+
+      if (secLeft > 0 && secLeft <= 3 && secLeft !== lastBeepSecRef.current) {
+        lastBeepSecRef.current = secLeft;
+        soundEngine.playCountdownBeep(false);
       }
 
       if (remainingMsRef.current <= 0) {
-        clearInterval(interval);
+        clearInterval(timer);
         handleSelectOptionRef.current(-1);
       }
     }, 100);
 
-    return () => clearInterval(interval);
+    return () => clearInterval(timer);
   }, [
     questionIndex,
+    effectiveTimeLimitSec,
     raceFinished,
     feedback,
     submitting,
+    currentQuestion,
     reportingQuestion,
-    effectiveTimeLimitSec,
   ]);
 
-  // Keyboard shortcuts (1-4 or A-D)
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (raceFinished || feedback !== null || submitting || reportingQuestion) return;
-      const key = e.key.toUpperCase();
-      if (key === '1' || key === 'A') handleSelectOption(0);
-      if (key === '2' || key === 'B') handleSelectOption(1);
-      if (key === '3' || key === 'C') handleSelectOption(2);
-      if (key === '4' || key === 'D') handleSelectOption(3);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [raceFinished, feedback, submitting, reportingQuestion, handleSelectOption]);
-
-  // Compute sorted standings
-  const standings = useMemo(() => {
-    if (!isMultiplayer) {
-      return [
-        {
-          playerId: profile.uid,
-          nickname: profile.nickname,
-          carColor: profile.carColor,
-          distance,
-          score,
-          correctAnswers: correctCount,
-          wrongAnswers: wrongCount,
-          finishTimeMs: elapsedMs,
-          placement: 1,
-        },
-      ];
+  // Build track racers list
+  const trackRacers: TrackRacer[] = useMemo(() => {
+    if (isMultiplayer && roomPlayers.length > 0) {
+      return roomPlayers.map((p) => ({
+        playerId: p.playerId,
+        nickname: p.nickname,
+        carColor: p.carColor,
+        distance: p.playerId === profile.uid ? distance : p.distance,
+        correctAnswers:
+          p.playerId === profile.uid ? correctCount : p.correctAnswers,
+        wrongAnswers: p.playerId === profile.uid ? wrongCount : p.wrongAnswers,
+        finished: p.playerId === profile.uid ? raceFinished : p.finished,
+        placement: p.placement,
+        isCurrentUser: p.playerId === profile.uid,
+      }));
     }
 
-    const sorted = [...mpPlayers].sort((a, b) => {
-      const aFinished100 = a.distance >= 100;
-      const bFinished100 = b.distance >= 100;
-      if (aFinished100 && bFinished100) {
-        return (
-          (a.finishTimeMs || Number.MAX_SAFE_INTEGER) -
-          (b.finishTimeMs || Number.MAX_SAFE_INTEGER)
-        );
-      }
-      if (aFinished100 !== bFinished100) {
-        return aFinished100 ? -1 : 1;
-      }
-      if (b.distance !== a.distance) {
-        return b.distance - a.distance;
-      }
-      if (b.correctAnswers !== a.correctAnswers) {
-        return b.correctAnswers - a.correctAnswers;
-      }
-      return (a.finishTimeMs || elapsedMs) - (b.finishTimeMs || elapsedMs);
-    });
-
-    return sorted.map((p, idx) => ({
-      ...p,
-      score: p.score ?? p.correctAnswers * 10,
-      placement: idx + 1,
-    }));
-  }, [isMultiplayer, mpPlayers, profile, distance, score, correctCount, wrongCount, elapsedMs]);
-
-  // Save completed race result ONCE when race finishes
-  useEffect(() => {
-    if (!raceFinished || savedResultRef.current) return;
-    savedResultRef.current = true;
-
-    const totalAnswered = Math.max(1, correctCount + wrongCount);
-    const accuracy = Math.round((correctCount / totalAnswered) * 100);
-    const myStanding =
-      standings.find((s) => s.playerId === profile.uid)?.placement || 1;
-    const resultRoomCode = roomCode || `solo_${Date.now()}`;
-
-    if (isGuest) {
-      onSaveLocalGuestResult?.({
-        category,
-        difficulty,
-        mode,
-        score,
-        correctAnswers: correctCount,
-        wrongAnswers: wrongCount,
-        accuracy,
-        distance,
-        durationMs: elapsedMs,
-        completedAtMs: Date.now(),
-      });
-    } else {
-      recordRaceCompletionAndStats(profile, {
-        roomCode: resultRoomCode,
+    return [
+      {
         playerId: profile.uid,
         nickname: profile.nickname,
         carColor: profile.carColor,
-        mode,
-        category,
-        difficulty,
-        placement: myStanding,
-        score,
+        distance,
         correctAnswers: correctCount,
         wrongAnswers: wrongCount,
-        accuracy,
-        distance,
-        durationMs: elapsedMs,
-        isPublic: true,
-        completedAtMs: Date.now(),
-      }).catch((err) => console.error('Error saving race result:', err));
-    }
+        finished: raceFinished,
+        placement: 1,
+        isCurrentUser: true,
+      },
+    ];
   }, [
-    raceFinished,
-    score,
+    isMultiplayer,
+    roomPlayers,
+    profile.uid,
+    profile.nickname,
+    profile.carColor,
+    distance,
     correctCount,
     wrongCount,
-    standings,
-    profile,
-    roomCode,
-    isGuest,
-    onSaveLocalGuestResult,
-    category,
-    difficulty,
-    mode,
-    distance,
-    elapsedMs,
+    raceFinished,
   ]);
 
-  const trackRacers: TrackRacer[] = useMemo(() => {
-    if (!isMultiplayer) {
-      return [
-        {
-          playerId: profile.uid,
-          nickname: profile.nickname,
-          carColor: profile.carColor,
-          distance,
-          correctAnswers: correctCount,
-          wrongAnswers: wrongCount,
-          finished: raceFinished,
-          isCurrentUser: true,
-        },
-      ];
-    }
-    return mpPlayers.map((p) => ({
-      playerId: p.playerId,
-      nickname: p.nickname,
-      carColor: p.carColor,
-      distance: p.distance,
-      correctAnswers: p.correctAnswers,
-      wrongAnswers: p.wrongAnswers,
-      finished: p.finished,
-      isCurrentUser: p.playerId === profile.uid,
+  // Final standings sorted by score and distance
+  const standings = useMemo(() => {
+    const list = trackRacers.map((r) => {
+      const rp = roomPlayers.find((p) => p.playerId === r.playerId);
+      return {
+        ...r,
+        score:
+          r.playerId === profile.uid
+            ? score
+            : (rp?.score ?? r.correctAnswers * 10),
+        finishTimeMs: rp?.finishTimeMs || elapsedMs,
+      };
+    });
+    list.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.distance !== a.distance) return b.distance - a.distance;
+      return a.finishTimeMs - b.finishTimeMs;
+    });
+    return list.map((item, idx) => ({
+      ...item,
+      placement: idx + 1,
     }));
-  }, [isMultiplayer, mpPlayers, profile, distance, correctCount, wrongCount, raceFinished]);
+  }, [trackRacers, roomPlayers, profile.uid, score, elapsedMs]);
 
-  const formatDuration = (ms: number) => {
-    const totalSec = ms / 1000;
-    return `${totalSec.toFixed(1)}s`;
-  };
-
-  const handleReportSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!reportingQuestion || !reportReason.trim()) return;
-    if (isGuest) {
-      setReportStatusMsg('Sign in with Google to submit question reports.');
-      return;
-    }
-    try {
-      await submitQuestionReport(profile, reportingQuestion, reportReason);
-      setReportStatusMsg('Thank you! Report sent to administrators.');
-      setReportReason('');
-      setTimeout(() => {
-        setReportingQuestion(null);
-        setReportStatusMsg(null);
-      }, 1400);
-    } catch {
-      setReportStatusMsg('Could not submit report. Please try again.');
-    }
-  };
-
-  const totalAttempted = correctCount + wrongCount;
+  const totalAnswered = correctCount + wrongCount;
   const accuracyPct =
-    totalAttempted > 0 ? Math.round((correctCount / totalAttempted) * 100) : 0;
+    totalAnswered > 0 ? Math.round((correctCount / totalAnswered) * 100) : 0;
 
-  const myStanding = standings.find((r) => r.playerId === profile.uid);
+  const myStanding = standings.find((s) => s.playerId === profile.uid);
   const myPlacement = myStanding?.placement || 1;
   const durationSecStr = (elapsedMs / 1000).toFixed(1);
 
-  const scoreSharePayload = useMemo(
+  const playfulReaction = useMemo(() => {
+    if (accuracyPct >= 80 || (isMultiplayer && myPlacement === 1 && score > 0)) {
+      return 'BEAST MODE!';
+    }
+    if (accuracyPct >= 50) {
+      return 'NICE RUN!';
+    }
+    return 'NEXT TIME!';
+  }, [accuracyPct, isMultiplayer, myPlacement, score]);
+
+  // IQ Relay Field Breakdown Summary
+  const iqBreakdown: IqFieldPerformance[] = useMemo(() => {
+    if (activeGameId !== 'iq_relay') return [];
+    const map = new Map<
+      IqRelayField,
+      { correct: number; total: number; totalTimeMs: number }
+    >();
+    iqRoundHistory.forEach((r) => {
+      const cur = map.get(r.field) || { correct: 0, total: 0, totalTimeMs: 0 };
+      cur.total += 1;
+      if (r.isCorrect) cur.correct += 1;
+      cur.totalTimeMs += r.timeTakenMs;
+      map.set(r.field, cur);
+    });
+    return Array.from(map.entries()).map(([field, stats]) => ({
+      field,
+      correct: stats.correct,
+      total: stats.total,
+      avgTimeMs:
+        stats.total > 0 ? Math.round(stats.totalTimeMs / stats.total) : 0,
+    }));
+  }, [activeGameId, iqRoundHistory]);
+
+  const iqSummaryMeta = useMemo(() => {
+    if (iqBreakdown.length === 0) {
+      return {
+        strongestField: 'Numerical Reasoning',
+        practiceField: 'Pattern Recognition',
+        title: 'All-Round Relay Ace',
+      };
+    }
+    const sorted = [...iqBreakdown].sort((a, b) => {
+      const accA = a.total > 0 ? a.correct / a.total : 0;
+      const accB = b.total > 0 ? b.correct / b.total : 0;
+      if (accB !== accA) return accB - accA;
+      return a.avgTimeMs - b.avgTimeMs;
+    });
+    const strongest = sorted[0].field;
+    const weakest = sorted[sorted.length - 1].field;
+
+    const titleMap: Record<IqRelayField, string> = {
+      'Numerical Reasoning': 'Number Ninja',
+      'Logical Reasoning': 'Logic Legend',
+      'Pattern Recognition': 'Pattern Pro',
+      'Verbal Reasoning': 'Word Wizard',
+      'Memory Challenge': 'Memory Maestro',
+      'Spatial Reasoning': 'Spatial Architect',
+      'Quick Maths': 'Math Sprinter',
+    };
+
+    return {
+      strongestField: strongest,
+      practiceField: weakest,
+      title: titleMap[strongest] || 'Logic Legend',
+    };
+  }, [iqBreakdown]);
+
+  const sharePayload = useMemo(
     () => ({
       nickname: profile.nickname,
       carColor: profile.carColor,
+      gameId: activeGameId,
       mode,
       category,
       difficulty,
@@ -634,10 +790,12 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
       durationSec: durationSecStr,
       placement: myPlacement,
       totalPlayers: standings.length,
+      reactionTitle: playfulReaction,
     }),
     [
       profile.nickname,
       profile.carColor,
+      activeGameId,
       mode,
       category,
       difficulty,
@@ -649,22 +807,22 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
       durationSecStr,
       myPlacement,
       standings.length,
+      playfulReaction,
     ]
   );
 
   const shareText = useMemo(
-    () => buildScoreShareText(scoreSharePayload),
-    [scoreSharePayload]
+    () => buildScoreShareText(sharePayload),
+    [sharePayload]
   );
-  const publicGameUrl = getPublicGameUrl();
   const socialLinks = useMemo(
-    () => getSocialShareLinks(shareText, publicGameUrl),
-    [shareText, publicGameUrl]
+    () => getSocialShareLinks(shareText, getPublicGameUrl()),
+    [shareText]
   );
 
-  const triggerShareToast = (msg: string) => {
+  const showShareFeedback = (msg: string) => {
     setShareToast(msg);
-    setTimeout(() => setShareToast(null), 2800);
+    setTimeout(() => setShareToast(null), 3200);
   };
 
   const handleOpenShareModal = async () => {
@@ -672,11 +830,9 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
     setShareModalOpen(true);
     setGeneratingCard(true);
     try {
-      const { dataUrl, blob } = await generateScoreCardImage(scoreSharePayload);
+      const { dataUrl, blob } = await generateScoreCardImage(sharePayload);
       setScoreCardDataUrl(dataUrl);
       setScoreCardBlob(blob);
-    } catch {
-      // ignore canvas errors
     } finally {
       setGeneratingCard(false);
     }
@@ -687,97 +843,161 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
     if (!scoreCardDataUrl) return;
     const link = document.createElement('a');
     link.href = scoreCardDataUrl;
-    link.download = `calculation-racer-${profile.nickname.toLowerCase()}-${score}pts.png`;
+    link.download = `trojo-${activeGameId}-${score}pts.png`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    triggerShareToast('Downloaded Score Card PNG!');
+    showShareFeedback('Saved 9:16 Score Image to your device!');
   };
 
-  const handleCopyScoreSummary = async () => {
+  const handleWhatsAppShare = async () => {
     soundEngine.playClick();
-    await copyToClipboard(shareText);
-    triggerShareToast('Copied score summary & public game link!');
+    if (
+      typeof navigator !== 'undefined' &&
+      navigator.share &&
+      scoreCardBlob &&
+      navigator.canShare
+    ) {
+      const file = new File(
+        [scoreCardBlob],
+        `trojo-score-${score}.png`,
+        { type: 'image/png' }
+      );
+      if (navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            title: `TROJO — A Fun Nagar · ${score} pts`,
+            text: shareText,
+            files: [file],
+          });
+          return;
+        } catch {
+          // Fallback to WhatsApp link below
+        }
+      }
+    }
+    window.open(socialLinks.whatsapp, '_blank', 'noopener,noreferrer');
+    showShareFeedback(
+      'Opened WhatsApp with your challenge message! Tap "Save Score Image" to attach the picture too.'
+    );
   };
 
-  const handleInstagramScoreShare = async () => {
+  const handleInstagramShare = async () => {
     soundEngine.playClick();
-    await copyToClipboard(shareText);
+    if (
+      typeof navigator !== 'undefined' &&
+      navigator.share &&
+      scoreCardBlob &&
+      navigator.canShare
+    ) {
+      const file = new File(
+        [scoreCardBlob],
+        `trojo-story-${score}.png`,
+        { type: 'image/png' }
+      );
+      if (navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            title: `TROJO — A Fun Nagar Story`,
+            text: shareText,
+            files: [file],
+          });
+          return;
+        } catch {
+          // Fallback below
+        }
+      }
+    }
     if (scoreCardDataUrl) {
       const link = document.createElement('a');
       link.href = scoreCardDataUrl;
-      link.download = `calculation-racer-${profile.nickname.toLowerCase()}-${score}pts.png`;
+      link.download = `trojo-story-${score}pts.png`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
     }
-    triggerShareToast('Downloaded Score Card PNG & copied caption for Instagram!');
+    await copyToClipboard(shareText);
+    showShareFeedback(
+      'Saved 9:16 Story image & copied challenge message! Open Instagram and select the saved image to post your Story manually.'
+    );
   };
 
-  const handleNativeScoreShare = async () => {
+  const handleReplayClick = async () => {
     soundEngine.playClick();
-    if (typeof navigator !== 'undefined' && navigator.share) {
+    if (isMultiplayer && roomCode && onReplayMultiplayer) {
+      setRematchBusy(true);
+      setRematchError(null);
       try {
-        if (scoreCardBlob && typeof navigator.canShare === 'function') {
-          const file = new File(
-            [scoreCardBlob],
-            `calculation-racer-${score}pts.png`,
-            { type: 'image/png' }
-          );
-          if (navigator.canShare({ files: [file] })) {
-            await navigator.share({
-              title: 'My Calculation Racer Score!',
-              text: shareText,
-              files: [file],
-            });
-            return;
-          }
-        }
-        await navigator.share({
-          title: 'My Calculation Racer Score!',
-          text: shareText,
-          url: publicGameUrl,
-        });
-        return;
-      } catch {
-        // Fallback if user cancels
+        await onReplayMultiplayer(roomCode);
+      } catch (err) {
+        setRematchError(
+          err instanceof Error
+            ? err.message
+            : 'Room is no longer active. Opening room setup...'
+        );
+        onPlayAgain();
+      } finally {
+        setRematchBusy(false);
       }
+      return;
     }
-    await copyToClipboard(shareText);
-    triggerShareToast('Copied score summary & link to clipboard!');
+    onPlayAgain();
   };
+
+  const handleReportSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reportingQuestion || !reportReason.trim()) return;
+    await submitQuestionReport(profile, reportingQuestion, reportReason);
+    setReportSubmitted(true);
+    setTimeout(() => {
+      setReportingQuestion(null);
+      setReportReason('');
+      setReportSubmitted(false);
+    }, 1200);
+  };
+
+  const formatDuration = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
+
+  const otherPlayerBluffs = useMemo(() => {
+    if (activeGameId !== 'cheat_your_friend' || !isMultiplayer) return [];
+    return roomPlayers
+      .filter((p) => p.playerId !== profile.uid && p.bluffText?.trim())
+      .map((p) => ({ nickname: p.nickname, bluffText: p.bluffText!.trim() }));
+  }, [activeGameId, isMultiplayer, roomPlayers, profile.uid]);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
-      {/* Top Race HUD */}
+      {/* Top Game HUD */}
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-3.5 shadow-2xs">
-        <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
-          <span className="rounded-lg bg-sky-100 px-2.5 py-1 text-sky-800">
-            {isMultiplayer ? `Room ${roomCode}` : mode === 'timed' ? 'Speed Blitz' : 'Solo Race'}
+        <div className="flex flex-wrap items-center gap-2 text-xs font-extrabold">
+          <span className="rounded-lg bg-sky-100 px-2.5 py-1 text-sky-900">
+            {gameInfo.emoji} {gameInfo.name}
           </span>
           <span className="rounded-lg bg-purple-100 px-2.5 py-1 text-purple-800">
-            {CATEGORY_LABELS[category]}
+            {isMultiplayer ? `Room ${roomCode}` : 'Solo Mode'}
           </span>
           <span className="rounded-lg bg-emerald-100 px-2.5 py-1 text-emerald-800">
             {DIFFICULTY_LABELS[difficulty]}
           </span>
           <span className="rounded-lg bg-slate-100 px-2.5 py-1 font-mono text-slate-700 tabular-nums">
-            Question {Math.min(totalQuestions, questionIndex + 1)} of {totalQuestions}
+            Round {Math.min(totalQuestions, questionIndex + 1)} / {totalQuestions}
           </span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-5 font-mono text-xs tabular-nums">
+        <div className="flex flex-wrap items-center gap-4 font-mono text-xs tabular-nums">
           <div>
             <span className="text-slate-500">Score: </span>
-            <span className="font-bold text-purple-600">{score} pts</span>
+            <span className="font-extrabold text-purple-700">{score} pts</span>
           </div>
-          <div>
-            <span className="text-slate-500">Distance: </span>
-            <span className="font-bold text-sky-600">{distance} / 100m</span>
-          </div>
+          {activeGameId === 'calculation_racer' && (
+            <div>
+              <span className="text-slate-500">Track: </span>
+              <span className="font-extrabold text-sky-600">{distance}/100m</span>
+            </div>
+          )}
           <div>
             <span className="text-slate-500">Accuracy: </span>
-            <span className="font-bold text-emerald-600">{accuracyPct}%</span>
+            <span className="font-extrabold text-emerald-600">{accuracyPct}%</span>
           </div>
           <div className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 font-bold text-slate-800">
             <Clock className="h-3.5 w-3.5 text-sky-600" />
@@ -786,31 +1006,69 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
         </div>
       </div>
 
-      {/* Live Racing Track Canvas */}
-      <div className="mt-4">
-        <RaceTrackCanvas
-          racers={trackRacers}
-          maxLanes={isMultiplayer ? room?.maxPlayers || 2 : 1}
-        />
-      </div>
+      {/* Calculation Racer Track OR Multiplayer Scoreboard Strip */}
+      {activeGameId === 'calculation_racer' ? (
+        <div className="mt-4">
+          <RaceTrackCanvas
+            racers={trackRacers}
+            maxLanes={isMultiplayer ? room?.maxPlayers || 2 : 1}
+          />
+        </div>
+      ) : (
+        isMultiplayer &&
+        standings.length > 1 && (
+          <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+            {standings.map((p) => {
+              const cInfo = CAR_PALETTE[p.carColor] || CAR_PALETTE.blue;
+              return (
+                <div
+                  key={p.playerId}
+                  className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-3.5 py-2.5 shadow-2xs"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-extrabold text-white"
+                      style={{ backgroundColor: cInfo.primary }}
+                    >
+                      #{p.placement}
+                    </span>
+                    <span className="truncate text-xs font-extrabold text-slate-900">
+                      {p.nickname}
+                    </span>
+                  </div>
+                  <span className="font-mono text-xs font-extrabold text-purple-700">
+                    {p.score} pts
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )
+      )}
 
-      {/* Active Question Card OR Post-Race Summary Card */}
+      {/* ACTIVE GAME ROUND CARD OR UNIFIED FINAL RESULTS SCREEN */}
       {!raceFinished && currentQuestion ? (
         <div className="mt-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-xs sm:p-8">
-          {/* Question Timer Bar */}
+          {/* Synchronized Round Timer Bar */}
           <div className="mb-5">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs font-semibold">
-              <span className="text-slate-500">
-                {currentQuestion.subcategory
-                  ? `Topic: ${currentQuestion.subcategory} · `
-                  : ''}
-                Correct: <strong className="text-emerald-600">+10m Forward</strong> · Wrong:{' '}
-                <strong className="text-rose-600">-5m Backward</strong>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs font-bold">
+              <span className="text-slate-600">
+                {activeGameId === 'iq_relay' && currentQuestion.iqField ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-orange-100 px-2.5 py-1 text-orange-900">
+                    <Brain className="h-3.5 w-3.5 text-orange-600" />
+                    <span>Relay Field: {currentQuestion.iqField}</span>
+                  </span>
+                ) : currentQuestion.subcategory ? (
+                  `Topic: ${currentQuestion.subcategory}`
+                ) : (
+                  gameInfo.tagline
+                )}
               </span>
+
               <span
                 className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-0.5 font-mono text-xs font-extrabold tabular-nums ${
                   questionTimeLeft <= 5
-                    ? 'bg-rose-100 text-rose-700 animate-pulse'
+                    ? 'bg-rose-100 text-rose-700 motion-safe:animate-pulse'
                     : 'bg-sky-50 text-sky-700'
                 }`}
               >
@@ -818,6 +1076,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
                 <span>{questionTimeLeft}s left</span>
               </span>
             </div>
+
             <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
               <div
                 className={`h-full rounded-full transition-all duration-100 ${
@@ -830,6 +1089,152 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
             </div>
           </div>
 
+          {/* GAME-SPECIFIC STAGE DISPLAYS */}
+          {/* 1. Word Scramble Letter Tiles + Direct Word Input */}
+          {activeGameId === 'word_scramble' && currentQuestion.scrambledLetters && (
+            <div className="mb-6 rounded-2xl border-2 border-orange-200 bg-orange-50/60 p-5 text-center">
+              <p className="text-xs font-extrabold uppercase tracking-wider text-orange-800">
+                Unscramble These Letters
+              </p>
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                {currentQuestion.scrambledLetters
+                  .split(/\s+/)
+                  .filter(Boolean)
+                  .map((letter, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-flex h-12 w-12 items-center justify-center rounded-2xl border-2 border-orange-300 bg-white font-mono text-xl font-extrabold text-slate-900 shadow-2xs"
+                    >
+                      {letter}
+                    </span>
+                  ))}
+              </div>
+
+              <form
+                onSubmit={handleTypedAnswerSubmit}
+                className="mx-auto mt-4 flex max-w-md gap-2"
+              >
+                <input
+                  type="text"
+                  value={typedAnswer}
+                  onChange={(e) => setTypedAnswer(e.target.value.toUpperCase())}
+                  placeholder="Type unscrambled word..."
+                  disabled={feedback !== null || submitting}
+                  className="min-h-[44px] flex-1 rounded-xl border-2 border-orange-200 bg-white px-4 py-2 font-mono text-sm font-extrabold uppercase text-slate-900 focus:border-orange-500 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={
+                    feedback !== null || submitting || !typedAnswer.trim()
+                  }
+                  className="min-h-[44px] rounded-xl bg-orange-500 px-5 py-2 text-xs font-extrabold text-white shadow-2xs hover:bg-orange-600 disabled:opacity-40"
+                >
+                  Submit Word
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* 2. Emoji Decode Clue Stage */}
+          {activeGameId === 'emoji_decode' && currentQuestion.emojiClue && (
+            <div className="mb-6 rounded-2xl border-2 border-purple-200 bg-purple-50/60 p-5 text-center">
+              <p className="text-xs font-extrabold uppercase tracking-wider text-purple-800">
+                Emoji Mystery Clue
+              </p>
+              <div className="mt-2 text-4xl sm:text-5xl">
+                {currentQuestion.emojiClue}
+              </div>
+
+              <form
+                onSubmit={handleTypedAnswerSubmit}
+                className="mx-auto mt-4 flex max-w-md gap-2"
+              >
+                <input
+                  type="text"
+                  value={typedAnswer}
+                  onChange={(e) => setTypedAnswer(e.target.value)}
+                  placeholder="Type your decoded answer or pick below..."
+                  disabled={feedback !== null || submitting}
+                  className="min-h-[44px] flex-1 rounded-xl border-2 border-purple-200 bg-white px-4 py-2 text-sm font-bold text-slate-900 focus:border-purple-500 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={
+                    feedback !== null || submitting || !typedAnswer.trim()
+                  }
+                  className="min-h-[44px] rounded-xl bg-purple-600 px-5 py-2 text-xs font-extrabold text-white shadow-2xs hover:bg-purple-500 disabled:opacity-40"
+                >
+                  Submit
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* 3. IQ Relay Memory Challenge Target */}
+          {activeGameId === 'iq_relay' && currentQuestion.memoryTarget && (
+            <div className="mb-5 rounded-2xl border-2 border-sky-200 bg-sky-50/70 p-4 text-center">
+              <p className="text-xs font-extrabold uppercase tracking-wider text-sky-800">
+                Memory Sequence Target
+              </p>
+              <p className="mt-1.5 font-mono text-2xl font-extrabold tracking-widest text-slate-900">
+                {currentQuestion.memoryTarget}
+              </p>
+            </div>
+          )}
+
+          {/* 4. Cheat Your Friend Bluff Input Stage */}
+          {activeGameId === 'cheat_your_friend' && (
+            <div className="mb-5 rounded-2xl border-2 border-purple-200 bg-purple-50/50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-purple-900">
+                  🎭 Step 1: Plant a Fake Answer to Bluff the Room (+5 Bluff Bonus)
+                </span>
+                {bluffSubmitted && (
+                  <span className="rounded-lg bg-emerald-100 px-2.5 py-0.5 text-xs font-extrabold text-emerald-800">
+                    ✓ Bluff Planted: &ldquo;{bluffInput}&rdquo;
+                  </span>
+                )}
+              </div>
+
+              {!bluffSubmitted && (
+                <div className="mt-2.5 flex flex-wrap gap-2">
+                  <input
+                    type="text"
+                    maxLength={60}
+                    value={bluffInput}
+                    onChange={(e) => setBluffInput(e.target.value)}
+                    placeholder="Write a believable fake answer..."
+                    className="min-h-[42px] flex-1 rounded-xl border border-purple-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 focus:border-purple-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleSubmitBluff()}
+                    disabled={!bluffInput.trim()}
+                    className="min-h-[42px] rounded-xl bg-purple-600 px-4 py-2 text-xs font-extrabold text-white hover:bg-purple-500 disabled:opacity-40"
+                  >
+                    Submit Bluff
+                  </button>
+                </div>
+              )}
+
+              {otherPlayerBluffs.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-purple-200/60 pt-2.5 text-xs">
+                  <span className="font-extrabold text-purple-800">
+                    Room Bluffs:
+                  </span>
+                  {otherPlayerBluffs.map((b, i) => (
+                    <span
+                      key={i}
+                      className="rounded-lg bg-white px-2.5 py-1 font-bold text-slate-700 shadow-2xs"
+                    >
+                      &ldquo;{b.bluffText}&rdquo;
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Question Header & Text */}
           <div className="flex items-start justify-between gap-4">
             <h2 className="font-display text-xl font-extrabold leading-snug text-slate-900 sm:text-2xl">
@@ -838,7 +1243,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
             <button
               type="button"
               onClick={() => setReportingQuestion(currentQuestion)}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
+              className="flex min-h-[38px] items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
               title="Report an issue with this question"
             >
               <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
@@ -846,7 +1251,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
             </button>
           </div>
 
-          {/* 4 Multiple-Choice Option Cards */}
+          {/* 4 Validated Multiple-Choice Option Buttons */}
           <div className="mt-6 grid grid-cols-1 gap-3.5 sm:grid-cols-2">
             {currentQuestion.options.map((optText, idx) => {
               const optionLetters = ['A', 'B', 'C', 'D'];
@@ -864,11 +1269,15 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
                 if (idx === feedback.correctOption) {
                   btnStyle =
                     'border-emerald-500 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20';
-                } else if (idx === feedback.selectedOption && !feedback.isCorrect) {
+                } else if (
+                  idx === feedback.selectedOption &&
+                  !feedback.isCorrect
+                ) {
                   btnStyle =
                     'border-rose-500 bg-rose-50 text-rose-950 ring-2 ring-rose-500/20';
                 } else {
-                  btnStyle = 'border-slate-200 bg-slate-50/40 text-slate-400 opacity-75';
+                  btnStyle =
+                    'border-slate-200 bg-slate-50/40 text-slate-400 opacity-75';
                 }
               }
 
@@ -886,7 +1295,9 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
                     >
                       {optionLetters[idx]}
                     </span>
-                    <span className="text-base font-bold leading-snug">{optText}</span>
+                    <span className="text-base font-bold leading-snug">
+                      {optText}
+                    </span>
                   </div>
 
                   {feedback !== null && idx === feedback.correctOption && (
@@ -902,7 +1313,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
             })}
           </div>
 
-          {/* Live Feedback Banner */}
+          {/* Live Answer Feedback Banner */}
           {feedback && (
             <div
               className={`mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3.5 text-sm ${
@@ -911,23 +1322,36 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
                   : 'border-rose-300 bg-rose-50 text-rose-900'
               }`}
             >
-              <div className="flex items-center gap-2 font-bold">
+              <div className="flex items-center gap-2 font-extrabold">
                 {feedback.isCorrect ? (
                   <>
                     <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
                     <span>
-                      Awesome! +10m forward & +{feedback.pointsDelta} pts!
+                      {activeGameId === 'cheat_your_friend'
+                        ? `TRUTH SPOTTED! +${feedback.pointsDelta} pts!`
+                        : activeGameId === 'calculation_racer'
+                          ? `Awesome! +10m forward & +${feedback.pointsDelta} pts!`
+                          : `Correct! +${feedback.pointsDelta} pts!`}
                     </span>
                   </>
                 ) : feedback.selectedOption === -1 ? (
                   <>
                     <Clock className="h-4 w-4 shrink-0 text-amber-600" />
-                    <span>Time expired! 0m movement.</span>
+                    <span>
+                      Time&rsquo;s up!{' '}
+                      {activeGameId === 'calculation_racer' ? '-5m penalty.' : ''}
+                    </span>
                   </>
                 ) : (
                   <>
                     <XCircle className="h-4 w-4 shrink-0 text-rose-600" />
-                    <span>Oops! Car moved -5m backward.</span>
+                    <span>
+                      {activeGameId === 'cheat_your_friend'
+                        ? 'GOTCHA! That was a bluff!'
+                        : activeGameId === 'calculation_racer'
+                          ? 'Wrong answer! -5m backward.'
+                          : 'Not quite!'}
+                    </span>
                   </>
                 )}
               </div>
@@ -938,178 +1362,254 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
           )}
         </div>
       ) : (
-        /* ==================== RACE RESULTS & FINAL SUMMARY ==================== */
+        /* ==================== CONSISTENT RESULTS SCREEN AFTER EVERY GAME ==================== */
         <div className="mt-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-xs sm:p-8">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-6">
-            <div>
-              <div className="inline-flex items-center gap-1.5 rounded-xl bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">
-                <Flag className="h-3.5 w-3.5" />
-                <span>Race Complete</span>
+          {/* Hero Score & Playful Reaction */}
+          <div className="mx-auto max-w-xl text-center">
+            <div className="inline-flex h-16 w-16 items-center justify-center rounded-3xl bg-sky-50 text-4xl shadow-2xs">
+              {gameInfo.emoji}
+            </div>
+
+            <div className="mt-3">
+              <span className="inline-block rounded-full bg-orange-100 px-4 py-1 font-display text-xs font-extrabold tracking-wider text-orange-800 uppercase">
+                {playfulReaction}
+              </span>
+            </div>
+
+            <h2 className="mt-2 font-display text-2xl font-extrabold text-slate-900 sm:text-3xl">
+              {gameInfo.name} Complete!
+            </h2>
+
+            {/* Very Large Bold Final Score */}
+            <div className="mt-4 rounded-3xl border-2 border-purple-200 bg-purple-50/60 px-6 py-5">
+              <p className="text-xs font-extrabold uppercase tracking-wider text-purple-800">
+                {activeGameId === 'iq_relay'
+                  ? 'IQ Relay Performance Score'
+                  : 'Final Score'}
+              </p>
+              <p className="mt-1 font-display text-6xl font-extrabold tracking-tight text-slate-900 tabular-nums sm:text-7xl">
+                {score}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs font-bold text-slate-600">
+                {isMultiplayer && (
+                  <span className="rounded-lg bg-amber-100 px-2.5 py-1 font-extrabold text-amber-900">
+                    Rank #{myPlacement} of {standings.length}
+                  </span>
+                )}
+                <span className="rounded-lg bg-white px-2.5 py-1">
+                  {correctCount}/{totalQuestions} Correct ({accuracyPct}%)
+                </span>
+                <span className="rounded-lg bg-white px-2.5 py-1">
+                  Time: {formatDuration(elapsedMs)}
+                </span>
+                <span className="rounded-lg bg-white px-2.5 py-1">
+                  {DIFFICULTY_LABELS[difficulty]}
+                </span>
               </div>
-              <h2 className="mt-2 font-display text-2xl font-extrabold text-slate-900 sm:text-3xl">
-                {standings[0]?.playerId === profile.uid && distance >= 100
-                  ? 'Victory! You Crossed the Finish Line!'
-                  : standings[0]
-                    ? `Winner: ${standings[0].nickname}`
-                    : 'Race Finished!'}
-              </h2>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2.5">
-              <button
-                type="button"
-                onClick={handleOpenShareModal}
-                className="inline-flex items-center gap-2 rounded-2xl bg-purple-600 px-5 py-3 text-xs font-extrabold text-white shadow-xs transition-colors hover:bg-purple-500"
-              >
-                <Share2 className="h-4 w-4" />
-                <span>Share Score</span>
-              </button>
-              <button
-                type="button"
-                onClick={onPlayAgain}
-                className="inline-flex items-center gap-2 rounded-2xl bg-sky-600 px-5 py-3 text-xs font-bold text-white shadow-xs transition-colors hover:bg-sky-500"
-              >
-                <RotateCcw className="h-4 w-4" />
-                <span>Play Again</span>
-              </button>
-              <button
-                type="button"
-                onClick={onChangeSettings}
-                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-100"
-              >
-                <SlidersHorizontal className="h-4 w-4" />
-                <span>Change Settings</span>
-              </button>
-              <button
-                type="button"
-                onClick={onOpenLeaderboard}
-                className="inline-flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-100"
-              >
-                <Trophy className="h-4 w-4" />
-                <span>Leaderboard</span>
-              </button>
-              <button
-                type="button"
-                onClick={onExitToHome}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-50"
-              >
-                Home
-              </button>
             </div>
           </div>
 
-          {/* Personal Summary Cards */}
-          <div className="mt-6 grid grid-cols-2 gap-3.5 sm:grid-cols-5">
-            <div className="rounded-2xl border border-purple-200 bg-purple-50/70 p-4">
-              <p className="text-xs font-bold text-purple-700">Total Score</p>
-              <p className="mt-1 font-mono text-2xl font-extrabold text-purple-900 tabular-nums">
-                {score} pts
-              </p>
-            </div>
-            <div className="rounded-2xl border border-sky-200 bg-sky-50/70 p-4">
-              <p className="text-xs font-bold text-sky-700">Distance</p>
-              <p className="mt-1 font-mono text-2xl font-extrabold text-sky-900 tabular-nums">
-                {distance} / 100m
-              </p>
-            </div>
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
-              <p className="text-xs font-bold text-emerald-700">Accuracy</p>
-              <p className="mt-1 font-mono text-2xl font-extrabold text-emerald-900 tabular-nums">
-                {accuracyPct}%
-              </p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-bold text-slate-600">Correct / Wrong</p>
-              <p className="mt-1 font-mono text-2xl font-extrabold text-slate-900 tabular-nums">
-                {correctCount} / {wrongCount}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
-              <p className="text-xs font-bold text-amber-800">Finish Time</p>
-              <p className="mt-1 font-mono text-2xl font-extrabold text-amber-900 tabular-nums">
-                {formatDuration(elapsedMs)}
-              </p>
-            </div>
-          </div>
+          {/* IQ Relay Performance Breakdown (Only when IQ Relay is played) */}
+          {activeGameId === 'iq_relay' && (
+            <div className="mt-6 rounded-2xl border-2 border-orange-200 bg-orange-50/40 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-orange-200/70 pb-3">
+                <div>
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-orange-800">
+                    Relay Title Earned
+                  </span>
+                  <h3 className="font-display text-xl font-extrabold text-slate-900">
+                    🏅 {iqSummaryMeta.title}
+                  </h3>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs font-bold">
+                  <span className="rounded-xl bg-emerald-100 px-3 py-1.5 text-emerald-900">
+                    Strongest: {iqSummaryMeta.strongestField}
+                  </span>
+                  <span className="rounded-xl bg-amber-100 px-3 py-1.5 text-amber-900">
+                    To Practise: {iqSummaryMeta.practiceField}
+                  </span>
+                </div>
+              </div>
 
-          {/* Final Standings Table */}
-          <div className="mt-6">
-            <h3 className="text-sm font-bold text-slate-800">Final Standings</h3>
-            <div className="mt-3 overflow-x-auto rounded-2xl border border-slate-200">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3">Rank</th>
-                    <th className="px-4 py-3">Player</th>
-                    <th className="px-4 py-3">Score</th>
-                    <th className="px-4 py-3">Distance</th>
-                    <th className="px-4 py-3">Correct</th>
-                    <th className="px-4 py-3">Wrong</th>
-                    <th className="px-4 py-3 text-right">Time</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-mono text-xs tabular-nums">
-                  {standings.map((racer) => {
-                    const carInfo = CAR_PALETTE[racer.carColor] || CAR_PALETTE.blue;
+              {iqBreakdown.length > 0 && (
+                <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  {iqBreakdown.map((item) => {
+                    const pct =
+                      item.total > 0
+                        ? Math.round((item.correct / item.total) * 100)
+                        : 0;
                     return (
-                      <tr
-                        key={racer.playerId}
-                        className={
-                          racer.playerId === profile.uid ? 'bg-sky-50/80' : 'hover:bg-slate-50'
-                        }
+                      <div
+                        key={item.field}
+                        className="rounded-xl border border-slate-200 bg-white p-3"
                       >
-                        <td className="px-4 py-3 font-bold text-slate-900">
-                          <span className="inline-flex items-center gap-1.5">
-                            {racer.placement === 1 && (
-                              <Award className="h-4 w-4 text-amber-500" />
-                            )}
-                            #{racer.placement}
+                        <div className="flex items-center justify-between text-xs font-bold">
+                          <span className="text-slate-800">{item.field}</span>
+                          <span className="font-mono text-purple-700">
+                            {item.correct}/{item.total} ({pct}%) ·{' '}
+                            {(item.avgTimeMs / 1000).toFixed(1)}s avg
                           </span>
-                        </td>
-                        <td className="px-4 py-3 font-sans font-bold text-slate-900">
-                          <span className="inline-flex items-center gap-2">
-                            <span
-                              className="h-3 w-3 rounded-sm"
-                              style={{ backgroundColor: carInfo.primary }}
-                            />
-                            <span>{racer.nickname}</span>
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 font-bold text-purple-600">
-                          {racer.score ?? racer.correctAnswers * 10} pts
-                        </td>
-                        <td className="px-4 py-3 font-bold text-sky-600">{racer.distance}m</td>
-                        <td className="px-4 py-3 font-bold text-emerald-600">
-                          {racer.correctAnswers}
-                        </td>
-                        <td className="px-4 py-3 font-bold text-rose-600">
-                          {racer.wrongAnswers}
-                        </td>
-                        <td className="px-4 py-3 text-right font-bold text-slate-700">
-                          {formatDuration(racer.finishTimeMs || elapsedMs)}
-                        </td>
-                      </tr>
+                        </div>
+                        <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            className="h-full rounded-full bg-orange-500"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
                     );
                   })}
-                </tbody>
-              </table>
+                </div>
+              )}
+
+              <p className="mt-3 text-[11px] font-medium text-slate-500">
+                Note: IQ Relay Performance Score is a casual game score based on round accuracy and speed, not a standardized scientific IQ measurement.
+              </p>
             </div>
+          )}
+
+          {/* Multiplayer Standings Table */}
+          {standings.length > 1 && (
+            <div className="mt-6">
+              <h3 className="text-sm font-extrabold text-slate-800">
+                Room Standings
+              </h3>
+              <div className="mt-2.5 overflow-x-auto rounded-2xl border border-slate-200">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3">Rank</th>
+                      <th className="px-4 py-3">Player</th>
+                      <th className="px-4 py-3">Score</th>
+                      <th className="px-4 py-3">Correct</th>
+                      <th className="px-4 py-3 text-right">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-mono text-xs tabular-nums">
+                    {standings.map((racer) => {
+                      const carInfo =
+                        CAR_PALETTE[racer.carColor] || CAR_PALETTE.blue;
+                      return (
+                        <tr
+                          key={racer.playerId}
+                          className={
+                            racer.playerId === profile.uid
+                              ? 'bg-sky-50/80'
+                              : 'hover:bg-slate-50'
+                          }
+                        >
+                          <td className="px-4 py-3 font-bold text-slate-900">
+                            <span className="inline-flex items-center gap-1.5">
+                              {racer.placement === 1 && (
+                                <Award className="h-4 w-4 text-amber-500" />
+                              )}
+                              #{racer.placement}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 font-sans font-bold text-slate-900">
+                            <span className="inline-flex items-center gap-2">
+                              <span
+                                className="h-3 w-3 rounded-full"
+                                style={{ backgroundColor: carInfo.primary }}
+                              />
+                              <span>{racer.nickname}</span>
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 font-bold text-purple-700">
+                            {racer.score} pts
+                          </td>
+                          <td className="px-4 py-3 font-bold text-emerald-600">
+                            {racer.correctAnswers}
+                          </td>
+                          <td className="px-4 py-3 text-right font-bold text-slate-700">
+                            {formatDuration(racer.finishTimeMs || elapsedMs)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {rematchError && (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-bold text-amber-900">
+              {rematchError}
+            </div>
+          )}
+
+          {/* BOTTOM ACTION BAR — THREE SOLID-FILLED BUTTONS IN EXACT ORDER:
+              1. Share Score — purple
+              2. Replay — green
+              3. Play More Games — blue */}
+          <div className="mt-7 grid grid-cols-1 gap-3.5 sm:grid-cols-3">
+            <button
+              type="button"
+              onClick={handleOpenShareModal}
+              className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-purple-600 px-5 py-3.5 font-display text-sm font-extrabold text-white shadow-sm transition-colors hover:bg-purple-500"
+            >
+              <Share2 className="h-4 w-4" />
+              <span>Share Score</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={rematchBusy}
+              onClick={handleReplayClick}
+              className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3.5 font-display text-sm font-extrabold text-white shadow-sm transition-colors hover:bg-emerald-500 disabled:opacity-50"
+            >
+              <RotateCcw className="h-4 w-4" />
+              <span>
+                {rematchBusy
+                  ? 'Preparing Rematch...'
+                  : isMultiplayer
+                    ? 'Replay With Same Players'
+                    : 'Replay'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playClick();
+                onPlayMoreGames();
+              }}
+              className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-sky-600 px-5 py-3.5 font-display text-sm font-extrabold text-white shadow-sm transition-colors hover:bg-sky-500"
+            >
+              <Gamepad2 className="h-4 w-4" />
+              <span>Play More Games</span>
+            </button>
+          </div>
+
+          <div className="mt-4 flex justify-center">
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playClick();
+                onOpenLeaderboard();
+              }}
+              className="inline-flex items-center gap-1.5 text-xs font-extrabold text-slate-500 hover:text-sky-600"
+            >
+              <Trophy className="h-3.5 w-3.5 text-amber-500" />
+              <span>View Global Leaderboard</span>
+            </button>
           </div>
         </div>
       )}
 
-      {/* Share Score & Visual Score Card Modal */}
+      {/* SHARE SCORE MODAL — ONLY WHATSAPP AND INSTAGRAM */}
       {shareModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/45 p-4 backdrop-blur-xs">
-          <div className="my-8 w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl sm:p-7">
+          <div className="my-8 w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl sm:p-7">
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-4">
               <div>
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-100 px-2.5 py-0.5 text-[11px] font-extrabold text-purple-800">
                   <Sparkles className="h-3 w-3" />
-                  <span>Challenge Your Friends</span>
+                  <span>TROJO — A Fun Nagar</span>
                 </span>
                 <h3 className="mt-1 font-display text-xl font-extrabold text-slate-900">
-                  Share Your Race Score Card
+                  Share Your Score
                 </h3>
               </div>
               <button
@@ -1121,110 +1621,72 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
               </button>
             </div>
 
-            {/* Visual Score Card Preview */}
+            {/* 9:16 Story Score Card Image Preview */}
             <div className="mt-4 flex flex-col items-center rounded-2xl border border-slate-200 bg-slate-50 p-4">
               {generatingCard ? (
                 <div className="flex h-64 items-center justify-center text-xs font-bold text-slate-500">
-                  Generating high-resolution Score Card...
+                  Generating 9:16 Score Image...
                 </div>
               ) : scoreCardDataUrl ? (
                 <img
                   src={scoreCardDataUrl}
-                  alt="Calculation Racer Score Card"
-                  className="max-h-80 w-auto rounded-xl border border-slate-200 shadow-sm"
+                  alt="TROJO — A Fun Nagar Score Card"
+                  className="max-h-72 w-auto rounded-xl border border-slate-200 shadow-sm"
                 />
               ) : null}
 
-              <div className="mt-3 flex flex-wrap items-center justify-center gap-2.5">
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
                 <button
                   type="button"
                   onClick={handleDownloadScoreCard}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-xs font-extrabold text-white shadow-2xs hover:bg-slate-800"
+                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-xs font-extrabold text-white shadow-2xs hover:bg-slate-800"
                 >
                   <Download className="h-3.5 w-3.5" />
-                  <span>Download Score Card (PNG)</span>
+                  <span>Save Score Image</span>
                 </button>
                 <button
                   type="button"
-                  onClick={handleNativeScoreShare}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-4 py-2 text-xs font-extrabold text-white shadow-2xs hover:bg-purple-500"
+                  onClick={async () => {
+                    soundEngine.playClick();
+                    await copyToClipboard(shareText);
+                    showShareFeedback('Copied challenge message & link!');
+                  }}
+                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-extrabold text-slate-700 hover:bg-slate-100"
                 >
-                  <Share2 className="h-3.5 w-3.5" />
-                  <span>Share Image / Link</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCopyScoreSummary}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-extrabold text-slate-700 hover:bg-slate-100"
-                >
-                  <Copy className="h-3.5 w-3.5 text-sky-600" />
-                  <span>Copy Score & Link</span>
+                  <Copy className="h-3.5 w-3.5 text-purple-600" />
+                  <span>Copy Challenge Text</span>
                 </button>
               </div>
             </div>
 
-            {/* Social Platform Share Buttons */}
-            <div className="mt-5">
-              <p className="mb-2.5 text-xs font-extrabold tracking-wider text-slate-500 uppercase">
-                Share Directly On Social Media
-              </p>
-              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5">
-                <a
-                  href={socialLinks.whatsapp}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => soundEngine.playClick()}
-                  className="flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-extrabold text-white hover:bg-emerald-500"
-                >
-                  <MessageCircle className="h-3.5 w-3.5" />
-                  <span>WhatsApp</span>
-                </a>
+            {/* Strictly Two Social Platforms: WhatsApp & Instagram */}
+            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={handleWhatsAppShare}
+                className="flex min-h-[50px] items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-extrabold text-white shadow-xs transition-colors hover:bg-emerald-500"
+              >
+                <MessageCircle className="h-4 w-4" />
+                <span>Share on WhatsApp</span>
+              </button>
 
-                <a
-                  href={socialLinks.telegram}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => soundEngine.playClick()}
-                  className="flex items-center justify-center gap-1.5 rounded-xl bg-sky-500 px-3 py-2.5 text-xs font-extrabold text-white hover:bg-sky-400"
-                >
-                  <Send className="h-3.5 w-3.5" />
-                  <span>Telegram</span>
-                </a>
-
-                <button
-                  type="button"
-                  onClick={handleInstagramScoreShare}
-                  className="flex items-center justify-center gap-1.5 rounded-xl bg-rose-600 px-3 py-2.5 text-xs font-extrabold text-white hover:bg-rose-500"
-                >
-                  <Sparkles className="h-3.5 w-3.5" />
-                  <span>Instagram</span>
-                </button>
-
-                <a
-                  href={socialLinks.facebook}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => soundEngine.playClick()}
-                  className="flex items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2.5 text-xs font-extrabold text-white hover:bg-blue-500"
-                >
-                  <span>Facebook</span>
-                </a>
-
-                <a
-                  href={socialLinks.twitter}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => soundEngine.playClick()}
-                  className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2.5 text-xs font-extrabold text-white hover:bg-slate-800"
-                >
-                  <span>X / Twitter</span>
-                </a>
-              </div>
+              <button
+                type="button"
+                onClick={handleInstagramShare}
+                className="flex min-h-[50px] items-center justify-center gap-2 rounded-2xl bg-purple-600 px-4 py-3 text-sm font-extrabold text-white shadow-xs transition-colors hover:bg-purple-500"
+              >
+                <Sparkles className="h-4 w-4" />
+                <span>Share on Instagram</span>
+              </button>
             </div>
+
+            <p className="mt-3 text-center text-[11px] font-medium text-slate-500">
+              For Instagram Stories: save the 9:16 score image above, then select it inside Instagram to publish your Story.
+            </p>
 
             {shareToast && (
               <div className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs font-bold text-emerald-800">
-                <Check className="h-4 w-4 text-emerald-600" />
+                <Check className="h-4 w-4 shrink-0 text-emerald-600" />
                 <span>{shareToast}</span>
               </div>
             )}
@@ -1248,36 +1710,35 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
                   Describe the issue (typo, unclear wording, or answer key check)
                 </label>
                 <textarea
-                  required
                   rows={3}
-                  maxLength={500}
+                  required
                   value={reportReason}
                   onChange={(e) => setReportReason(e.target.value)}
-                  placeholder="Tell us what needs fixing..."
-                  className="mt-1.5 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:border-sky-500 focus:bg-white focus:outline-none"
+                  placeholder="Please describe what seems wrong..."
+                  className="mt-1.5 w-full rounded-2xl border border-slate-300 bg-slate-50 p-3 text-sm text-slate-900 focus:border-sky-500 focus:bg-white focus:outline-none"
                 />
               </div>
-              {reportStatusMsg && (
-                <p className="text-xs font-bold text-sky-700">{reportStatusMsg}</p>
+              {reportSubmitted ? (
+                <div className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">
+                  Thank you! Report sent to administrator review queue.
+                </div>
+              ) : (
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setReportingQuestion(null)}
+                    className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-white hover:bg-amber-600"
+                  >
+                    Submit Report
+                  </button>
+                </div>
               )}
-              <div className="flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setReportingQuestion(null);
-                    setReportStatusMsg(null);
-                  }}
-                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="rounded-xl bg-sky-600 px-4 py-2 text-xs font-bold text-white hover:bg-sky-500"
-                >
-                  Submit Report
-                </button>
-              </div>
             </form>
           </div>
         </div>

@@ -15,17 +15,21 @@ import {
   Ban,
   CheckCircle2,
   Database,
+  Download,
   Edit3,
   Plus,
   Search,
   ShieldAlert,
   Trash2,
+  Upload,
 } from 'lucide-react';
 import { db, handleFirestoreError } from '../lib/firebase';
 import {
   AdminAuditLogRecord,
   CATEGORY_LABELS,
   DIFFICULTY_LABELS,
+  IQ_RELAY_ALL_FIELDS,
+  IqRelayField,
   OperationType,
   PlayerProfile,
   QuestionCategory,
@@ -36,6 +40,9 @@ import {
   RaceResultRecord,
   RoomRecord,
   SUBCATEGORIES_BY_CATEGORY,
+  TROJO_GAME_MAP,
+  TROJO_GAMES,
+  TrojoGameId,
 } from '../game/types';
 import {
   adminDeleteQuestion,
@@ -43,7 +50,8 @@ import {
   logAdminAction,
   seedStarterQuestionsToFirestore,
 } from '../lib/gameService';
-import { findCorrectOptionFromHash } from '../lib/seedQuestions';
+import { findCorrectOptionFromHash, SEED_QUESTIONS } from '../lib/seedQuestions';
+import { TROJO_GAME_QUESTIONS } from '../lib/trojoGameBanks';
 
 interface AdminDashboardPageProps {
   isAdmin: boolean;
@@ -68,7 +76,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
   onExitAdmin,
 }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
-  const [questions, setQuestions] = useState<QuestionItem[]>([]);
+  const [firestoreQuestions, setFirestoreQuestions] = useState<QuestionItem[]>([]);
   const [players, setPlayers] = useState<PlayerProfile[]>([]);
   const [rooms, setRooms] = useState<RoomRecord[]>([]);
   const [results, setResults] = useState<RaceResultRecord[]>([]);
@@ -77,12 +85,17 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterGame, setFilterGame] = useState<TrojoGameId | 'all'>('all');
   const [filterCat, setFilterCat] = useState<QuestionCategory | 'all'>('all');
   const [filterDiff, setFilterDiff] = useState<QuestionDifficulty | 'all'>('all');
 
   // Question Editor Modal State
   const [editingQuestion, setEditingQuestion] = useState<{
     id?: string;
+    gameId: TrojoGameId;
+    iqField?: IqRelayField;
+    scrambledLetters?: string;
+    emojiClue?: string;
     category: QuestionCategory;
     subcategory: string;
     difficulty: QuestionDifficulty;
@@ -115,7 +128,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
       collection(db, 'questions'),
       (snap) => {
         const list = snap.docs.map((d) => d.data() as QuestionItem);
-        setQuestions(list);
+        setFirestoreQuestions(list);
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'questions')
     );
@@ -179,11 +192,28 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
     };
   }, [isAdmin]);
 
+  // Combined question bank (Firestore overrides built-in seed/TROJO questions by id)
+  const questions = useMemo(() => {
+    const byId = new Map<string, QuestionItem>();
+    for (const q of SEED_QUESTIONS) {
+      byId.set(q.id, { ...q, gameId: q.gameId || 'calculation_racer' });
+    }
+    for (const q of TROJO_GAME_QUESTIONS) {
+      byId.set(q.id, q);
+    }
+    for (const q of firestoreQuestions) {
+      byId.set(q.id, { ...q, gameId: q.gameId || 'calculation_racer' });
+    }
+    return Array.from(byId.values());
+  }, [firestoreQuestions]);
+
   const filteredQuestions = useMemo(() => {
     return questions.filter((q) => {
+      const qGame = q.gameId || 'calculation_racer';
       if (activeTab === 'current_affairs' && q.category !== 'current_affairs') {
         return false;
       }
+      if (filterGame !== 'all' && qGame !== filterGame) return false;
       if (filterCat !== 'all' && q.category !== filterCat) return false;
       if (filterDiff !== 'all' && q.difficulty !== filterDiff) return false;
       if (
@@ -194,7 +224,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
       }
       return true;
     });
-  }, [questions, activeTab, filterCat, filterDiff, searchQuery]);
+  }, [questions, activeTab, filterGame, filterCat, filterDiff, searchQuery]);
 
   if (!isAdmin) {
     const isLoggedOut = !adminUid;
@@ -239,6 +269,10 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
 
     if (!q) {
       setEditingQuestion({
+        gameId: filterGame === 'all' ? 'calculation_racer' : filterGame,
+        iqField: 'Logical Reasoning',
+        scrambledLetters: '',
+        emojiClue: '',
         category: cat,
         subcategory: defaultSub,
         difficulty: 'medium',
@@ -270,6 +304,10 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
 
     setEditingQuestion({
       id: q.id,
+      gameId: q.gameId || 'calculation_racer',
+      iqField: q.iqField || 'Logical Reasoning',
+      scrambledLetters: q.scrambledLetters || '',
+      emojiClue: q.emojiClue || '',
       category: q.category,
       subcategory: q.subcategory || defaultSub,
       difficulty: q.difficulty,
@@ -306,10 +344,87 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
         'seed_questions',
         `Synchronized ${added} new starter questions into Firestore.`
       );
-      setStatusBanner(`Starter question bank synced (${added} new records added).`);
+      setStatusBanner(`Question bank synced (${added} new records added).`);
       setTimeout(() => setStatusBanner(null), 3500);
     } finally {
       setSeeding(false);
+    }
+  };
+
+  const handleExportQuestionsJson = () => {
+    const exportPayload = filteredQuestions.map((q) => ({
+      id: q.id,
+      gameId: q.gameId || 'calculation_racer',
+      iqField: q.iqField,
+      scrambledLetters: q.scrambledLetters,
+      emojiClue: q.emojiClue,
+      category: q.category,
+      subcategory: q.subcategory,
+      difficulty: q.difficulty,
+      questionText: q.questionText,
+      options: q.options,
+      correctOption: findCorrectOptionFromHash(q.id, q.answerHash),
+      explanation: q.explanation || '',
+      sourceUrl: q.sourceUrl || '',
+      publishedAt: q.publishedAt || '',
+      verifiedAt: q.verifiedAt || '',
+      expiresAt: q.expiresAt || '',
+      isActive: q.isActive,
+    }));
+
+    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `trojo-questions-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportQuestionsJson = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) {
+        setStatusBanner('Import file must be a JSON array of questions.');
+        return;
+      }
+      let importedCount = 0;
+      for (const item of parsed.slice(0, 50)) {
+        if (!item.questionText || !Array.isArray(item.options) || item.options.length !== 4) {
+          continue;
+        }
+        await adminSaveQuestion(adminUid, adminEmail, {
+          id: item.id,
+          gameId: item.gameId || 'calculation_racer',
+          iqField: item.iqField,
+          scrambledLetters: item.scrambledLetters,
+          emojiClue: item.emojiClue,
+          category: item.category || 'gk',
+          subcategory: item.subcategory || 'General',
+          difficulty: item.difficulty || 'medium',
+          questionText: item.questionText,
+          options: item.options as [string, string, string, string],
+          correctOption: Number(item.correctOption ?? 0),
+          explanation: item.explanation || '',
+          sourceUrl: item.sourceUrl || '',
+          publishedAt: item.publishedAt || '',
+          verifiedAt: item.verifiedAt || '',
+          expiresAt: item.expiresAt || '',
+          isActive: item.isActive !== false,
+        });
+        importedCount++;
+      }
+      setStatusBanner(`Successfully imported ${importedCount} questions.`);
+      setTimeout(() => setStatusBanner(null), 3500);
+    } catch {
+      setStatusBanner('Failed to parse JSON import file.');
+    } finally {
+      e.target.value = '';
     }
   };
 
@@ -317,6 +432,10 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
     const correctOption = findCorrectOptionFromHash(q.id, q.answerHash);
     await adminSaveQuestion(adminUid, adminEmail, {
       id: q.id,
+      gameId: q.gameId || 'calculation_racer',
+      iqField: q.iqField,
+      scrambledLetters: q.scrambledLetters,
+      emojiClue: q.emojiClue,
       category: q.category,
       subcategory: q.subcategory,
       difficulty: q.difficulty,
@@ -337,6 +456,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
     const correctOption = findCorrectOptionFromHash(q.id, q.answerHash);
     await adminSaveQuestion(adminUid, adminEmail, {
       id: q.id,
+      gameId: q.gameId || 'calculation_racer',
       category: q.category,
       subcategory: q.subcategory,
       difficulty: q.difficulty,
@@ -366,33 +486,54 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
           <button
             type="button"
             onClick={onExitAdmin}
-            className="mb-2 inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100"
+            className="mb-2 inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
-            <span>Back to Game</span>
+            <span>Back to TROJO</span>
           </button>
-          <p className="text-xs font-bold text-sky-700">
-            Authorized Administrator Console · {adminEmail}
+          <p className="text-xs font-bold text-blue-700">
+            Authorized Private Administrator Console · {adminEmail}
           </p>
           <h1 className="mt-0.5 font-display text-2xl font-extrabold text-slate-900 sm:text-3xl">
-            Calculation Racer Admin Panel
+            TROJO — A Fun Nagar Admin Panel
           </h1>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={handleExportQuestionsJson}
+            className="flex min-h-[42px] items-center gap-1.5 rounded-2xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
+          >
+            <Download className="h-4 w-4 text-slate-600" />
+            <span>Export JSON</span>
+          </button>
+
+          <label className="flex min-h-[42px] cursor-pointer items-center gap-1.5 rounded-2xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100">
+            <Upload className="h-4 w-4 text-slate-600" />
+            <span>Import JSON</span>
+            <input
+              type="file"
+              accept=".json,application/json"
+              onChange={handleImportQuestionsJson}
+              className="hidden"
+            />
+          </label>
+
           <button
             type="button"
             disabled={seeding}
             onClick={handleSeedDatabase}
-            className="flex items-center gap-2 rounded-2xl border-2 border-sky-200 bg-sky-50 px-4 py-2.5 text-xs font-bold text-sky-800 transition-colors hover:bg-sky-100"
+            className="flex min-h-[42px] items-center gap-2 rounded-2xl border-2 border-blue-200 bg-blue-50 px-4 py-2 text-xs font-bold text-blue-800 transition-colors hover:bg-blue-100"
           >
-            <Database className="h-4 w-4 text-sky-600" />
-            <span>{seeding ? 'Syncing Question Bank...' : 'Sync Starter Question Bank'}</span>
+            <Database className="h-4 w-4 text-blue-600" />
+            <span>{seeding ? 'Syncing...' : 'Sync Question Bank'}</span>
           </button>
+
           <button
             type="button"
             onClick={() => handleOpenEditQuestion(undefined)}
-            className="flex items-center gap-2 rounded-2xl bg-sky-600 px-4 py-2.5 text-xs font-bold text-white shadow-xs transition-colors hover:bg-sky-500"
+            className="flex min-h-[42px] items-center gap-2 rounded-2xl bg-[#2563EB] px-4 py-2 text-xs font-extrabold text-white shadow-xs transition-colors hover:bg-blue-700"
           >
             <Plus className="h-4 w-4" />
             <span>New Question</span>
@@ -409,14 +550,14 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
 
       {/* 4 Dashboard Overview Cards */}
       <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <div className="rounded-2xl border border-sky-200 bg-sky-50/70 p-5">
-          <p className="text-xs font-bold text-sky-800">Total Players</p>
-          <p className="mt-2 font-mono text-3xl font-extrabold text-sky-950 tabular-nums">
+        <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-5">
+          <p className="text-xs font-bold text-blue-800">Total Players</p>
+          <p className="mt-2 font-mono text-3xl font-extrabold text-blue-950 tabular-nums">
             {players.length}
           </p>
         </div>
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-5">
-          <p className="text-xs font-bold text-emerald-800">Races Completed</p>
+          <p className="text-xs font-bold text-emerald-800">Games Completed</p>
           <p className="mt-2 font-mono text-3xl font-extrabold text-emerald-950 tabular-nums">
             {results.length}
           </p>
@@ -428,7 +569,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
           </p>
         </div>
         <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-5">
-          <p className="text-xs font-bold text-amber-800">Questions in Database</p>
+          <p className="text-xs font-bold text-amber-800">Total Questions (7 Games)</p>
           <p className="mt-2 font-mono text-3xl font-extrabold text-amber-950 tabular-nums">
             {questions.length}
           </p>
@@ -440,14 +581,14 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
         {(
           [
             { id: 'overview', label: 'Overview' },
-            { id: 'questions', label: `Question Bank (${questions.length})` },
+            { id: 'questions', label: `All 7 Games Bank (${questions.length})` },
             { id: 'current_affairs', label: 'Current Affairs Desk' },
             {
               id: 'reports',
               label: `Reported Questions (${reports.filter((r) => r.status === 'open').length})`,
             },
             { id: 'players', label: `Players (${players.length})` },
-            { id: 'races', label: 'Race Records' },
+            { id: 'races', label: 'Match Records' },
             { id: 'audit', label: 'Admin Audit Log' },
           ] as { id: AdminTab; label: string }[]
         ).map((tab) => (
@@ -455,9 +596,9 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
             key={tab.id}
             type="button"
             onClick={() => setActiveTab(tab.id)}
-            className={`rounded-xl px-3.5 py-2 text-xs font-bold transition-colors ${
+            className={`min-h-[38px] rounded-xl px-3.5 py-2 text-xs font-bold transition-colors ${
               activeTab === tab.id
-                ? 'bg-sky-600 text-white shadow-2xs'
+                ? 'bg-[#2563EB] text-white shadow-2xs'
                 : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
             }`}
           >
@@ -477,12 +618,12 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                 <h2 className="font-display text-lg font-bold text-slate-900">
                   {activeTab === 'current_affairs'
                     ? 'Current Affairs Verification & Expiry Management'
-                    : 'Question Bank Management'}
+                    : 'TROJO 7-Game Question Bank Management'}
                 </h2>
                 <p className="mt-0.5 text-xs text-slate-500">
                   {activeTab === 'current_affairs'
                     ? 'Every Current Affairs question includes publication date, source URL, verification date, and optional expiry.'
-                    : 'Create, edit, search, filter, enable/disable, or delete multiple-choice questions.'}
+                    : 'Create, edit, search, filter, import/export, enable/disable, or delete questions across all 7 TROJO games.'}
                 </p>
               </div>
 
@@ -490,7 +631,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                 <button
                   type="button"
                   onClick={() => handleOpenEditQuestion(undefined, 'current_affairs')}
-                  className="flex items-center gap-1.5 rounded-2xl bg-sky-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-sky-500"
+                  className="flex min-h-[42px] items-center gap-1.5 rounded-2xl bg-[#2563EB] px-4 py-2.5 text-xs font-extrabold text-white hover:bg-blue-700"
                 >
                   <Plus className="h-4 w-4" />
                   <span>Add Verified Current Affairs Question</span>
@@ -507,9 +648,22 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search question text..."
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pr-3 pl-9 text-xs text-slate-900 placeholder-slate-400 focus:border-sky-500 focus:bg-white focus:outline-none"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pr-3 pl-9 text-xs text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none"
                 />
               </div>
+
+              <select
+                value={filterGame}
+                onChange={(e) => setFilterGame(e.target.value as TrojoGameId | 'all')}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700"
+              >
+                <option value="all">All 7 TROJO Games</option>
+                {TROJO_GAMES.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.emoji} {g.name}
+                  </option>
+                ))}
+              </select>
 
               {activeTab !== 'current_affairs' && (
                 <select
@@ -540,10 +694,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
             {filteredQuestions.length === 0 ? (
               <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 py-10 text-center">
                 <p className="text-sm font-bold text-slate-800">
-                  No questions found in Firestore matching your filter.
-                </p>
-                <p className="mt-1 text-xs text-slate-500">
-                  Click &ldquo;Sync Starter Question Bank&rdquo; above to populate all verified starter questions into Firestore.
+                  No questions found matching your filter.
                 </p>
               </div>
             ) : (
@@ -551,98 +702,100 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                 <table className="w-full text-left text-sm">
                   <thead className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
                     <tr>
+                      <th className="px-4 py-3">Game</th>
                       <th className="px-4 py-3">Question</th>
                       <th className="px-4 py-3">Category · Topic · Diff</th>
-                      <th className="px-4 py-3">Verification / Source</th>
                       <th className="px-4 py-3">Status</th>
                       <th className="px-4 py-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-xs">
-                    {filteredQuestions.map((q) => (
-                      <tr key={q.id} className="hover:bg-slate-50">
-                        <td className="max-w-md px-4 py-3 font-semibold text-slate-900">
-                          <p>{q.questionText}</p>
-                          <p className="mt-1 font-normal text-slate-500">
-                            Options: {q.options.join(' | ')}
-                          </p>
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-slate-700">
-                          <span className="font-bold">{CATEGORY_LABELS[q.category]}</span>
-                          {q.subcategory ? ` · ${q.subcategory}` : ''} ·{' '}
-                          <span className="uppercase">{DIFFICULTY_LABELS[q.difficulty]}</span>
-                        </td>
-                        <td className="px-4 py-3 font-mono text-slate-500">
-                          {q.verifiedAt ? `Verified ${q.verifiedAt}` : 'Standard'}
-                          {q.expiresAt ? ` · Exp ${q.expiresAt}` : ''}
-                          {q.sourceUrl && (
-                            <span className="block max-w-[180px] truncate text-sky-600">
-                              {q.sourceUrl}
+                    {filteredQuestions.slice(0, 150).map((q) => {
+                      const gMeta =
+                        TROJO_GAME_MAP[q.gameId || 'calculation_racer'] ||
+                        TROJO_GAME_MAP.calculation_racer;
+                      return (
+                        <tr key={q.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-3 whitespace-nowrap font-bold text-slate-800">
+                            <span className="inline-flex items-center gap-1.5">
+                              <span>{gMeta.emoji}</span>
+                              <span>{gMeta.name}</span>
                             </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <span
-                            className={`rounded-lg px-2 py-0.5 font-bold ${
-                              q.isActive
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : 'bg-amber-100 text-amber-800'
-                            }`}
-                          >
-                            {q.isActive ? 'Active' : 'Disabled'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right whitespace-nowrap">
-                          <div className="inline-flex items-center gap-2">
-                            {q.category === 'current_affairs' && (
+                          </td>
+                          <td className="max-w-md px-4 py-3 font-semibold text-slate-900">
+                            <p>{q.questionText}</p>
+                            <p className="mt-1 font-normal text-slate-500">
+                              Options: {q.options.join(' | ')}
+                            </p>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-slate-700">
+                            <span className="font-bold">{CATEGORY_LABELS[q.category]}</span>
+                            {q.subcategory ? ` · ${q.subcategory}` : ''} ·{' '}
+                            <span className="uppercase">{DIFFICULTY_LABELS[q.difficulty]}</span>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span
+                              className={`rounded-lg px-2 py-0.5 font-bold ${
+                                q.isActive
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {q.isActive ? 'Active' : 'Disabled'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center gap-2">
+                              {q.category === 'current_affairs' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleVerifyCurrentAffairsNow(q)}
+                                  className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-800 hover:bg-emerald-100"
+                                >
+                                  Verify Today
+                                </button>
+                              )}
                               <button
                                 type="button"
-                                onClick={() => handleVerifyCurrentAffairsNow(q)}
-                                className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-800 hover:bg-emerald-100"
+                                onClick={() => handleToggleQuestionActive(q)}
+                                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
                               >
-                                Verify Today
+                                {q.isActive ? 'Disable' : 'Enable'}
                               </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => handleToggleQuestionActive(q)}
-                              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                            >
-                              {q.isActive ? 'Disable' : 'Enable'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditQuestion(q)}
-                              className="rounded-lg border border-slate-200 bg-white p-1.5 text-sky-600 hover:bg-sky-50"
-                              title="Edit Question"
-                            >
-                              <Edit3 className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setConfirmDialog({
-                                  title: 'Delete Question Permanently?',
-                                  description: `Are you sure you want to delete "${q.questionText}"? This action will be recorded in the Admin Audit Log.`,
-                                  onConfirm: async () => {
-                                    await adminDeleteQuestion(
-                                      adminUid,
-                                      adminEmail,
-                                      q.id,
-                                      q.questionText
-                                    );
-                                  },
-                                })
-                              }
-                              className="rounded-lg border border-rose-200 bg-rose-50 p-1.5 text-rose-600 hover:bg-rose-100"
-                              title="Delete Question"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditQuestion(q)}
+                                className="rounded-lg border border-slate-200 bg-white p-1.5 text-blue-600 hover:bg-blue-50"
+                                title="Edit Question"
+                              >
+                                <Edit3 className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setConfirmDialog({
+                                    title: 'Delete Question Permanently?',
+                                    description: `Are you sure you want to delete "${q.questionText}"? This action will be recorded in the Admin Audit Log.`,
+                                    onConfirm: async () => {
+                                      await adminDeleteQuestion(
+                                        adminUid,
+                                        adminEmail,
+                                        q.id,
+                                        q.questionText
+                                      );
+                                    },
+                                  })
+                                }
+                                className="rounded-lg border border-rose-200 bg-rose-50 p-1.5 text-rose-600 hover:bg-rose-100"
+                                title="Delete Question"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -670,7 +823,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                     <div>
                       <p className="text-xs text-slate-500">
                         Reported by <strong className="text-slate-900">{rep.reporterNickname}</strong> · Status:{' '}
-                        <span className="font-bold uppercase text-sky-700">{rep.status}</span>
+                        <span className="font-bold uppercase text-blue-700">{rep.status}</span>
                       </p>
                       <p className="mt-1 text-sm font-bold text-slate-900">
                         Question: &ldquo;{rep.questionText}&rdquo;
@@ -736,14 +889,14 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
         {activeTab === 'players' && (
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs">
             <h2 className="font-display text-lg font-bold text-slate-900">
-              Player Accounts & Moderation
+              Player Accounts &amp; Moderation
             </h2>
             <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
               <table className="w-full text-left text-sm">
                 <thead className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
                   <tr>
                     <th className="px-4 py-3">Nickname</th>
-                    <th className="px-4 py-3">Wins / Races</th>
+                    <th className="px-4 py-3">Wins / Games</th>
                     <th className="px-4 py-3">Best Time</th>
                     <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3 text-right">Moderation</th>
@@ -821,71 +974,78 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
         {activeTab === 'races' && (
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs">
             <h2 className="font-display text-lg font-bold text-slate-900">
-              Race History & Leaderboard Verification
+              Match History &amp; Leaderboard Verification
             </h2>
             <p className="mt-1 text-xs text-slate-500">
-              Inspect official race results and remove invalidated records with an audit trail.
+              Inspect official game results and remove invalidated records with an audit trail.
             </p>
             <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
               <table className="w-full text-left text-sm">
                 <thead className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
                   <tr>
-                    <th className="px-4 py-3">Driver</th>
+                    <th className="px-4 py-3">Player</th>
+                    <th className="px-4 py-3">Game</th>
                     <th className="px-4 py-3">Room / Mode</th>
-                    <th className="px-4 py-3">Category</th>
                     <th className="px-4 py-3">Placement</th>
-                    <th className="px-4 py-3">Distance</th>
+                    <th className="px-4 py-3">Score</th>
                     <th className="px-4 py-3">Duration</th>
                     <th className="px-4 py-3 text-right">Audit Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono text-xs tabular-nums">
-                  {results.map((r) => (
-                    <tr key={r.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-sans font-bold text-slate-900">
-                        {r.nickname}
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">
-                        {r.roomCode} ({r.mode})
-                      </td>
-                      <td className="px-4 py-3 font-sans text-slate-700">
-                        {CATEGORY_LABELS[r.category]}
-                      </td>
-                      <td className="px-4 py-3 font-bold text-slate-900">#{r.placement}</td>
-                      <td className="px-4 py-3 font-bold text-sky-600">{r.distance}m</td>
-                      <td className="px-4 py-3 font-bold text-emerald-600">
-                        {(r.durationMs / 1000).toFixed(1)}s
-                      </td>
-                      <td className="px-4 py-3 text-right font-sans">
-                        {r.id && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setConfirmDialog({
-                                title: 'Remove Race Record?',
-                                description: `Remove ${r.nickname}'s race record (${r.roomCode})?`,
-                                onConfirm: async () => {
-                                  if (!r.id) return;
-                                  await deleteDoc(doc(db, 'race_results', r.id));
-                                  await logAdminAction(
-                                    adminUid,
-                                    adminEmail,
-                                    'Removed Race Result',
-                                    'leaderboard',
-                                    r.id,
-                                    `Removed result for ${r.nickname} in ${r.roomCode}`
-                                  );
-                                },
-                              })
-                            }
-                            className="rounded-xl border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-100"
-                          >
-                            Remove
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {results.map((r) => {
+                    const gMeta =
+                      TROJO_GAME_MAP[r.gameId || 'calculation_racer'] ||
+                      TROJO_GAME_MAP.calculation_racer;
+                    return (
+                      <tr key={r.id} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 font-sans font-bold text-slate-900">
+                          {r.nickname}
+                        </td>
+                        <td className="px-4 py-3 font-sans text-slate-700">
+                          {gMeta.emoji} {gMeta.name}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {r.roomCode} ({r.mode})
+                        </td>
+                        <td className="px-4 py-3 font-bold text-slate-900">#{r.placement}</td>
+                        <td className="px-4 py-3 font-bold text-purple-600">
+                          {r.score ?? r.correctAnswers * 10} pts
+                        </td>
+                        <td className="px-4 py-3 font-bold text-emerald-600">
+                          {(r.durationMs / 1000).toFixed(1)}s
+                        </td>
+                        <td className="px-4 py-3 text-right font-sans">
+                          {r.id && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setConfirmDialog({
+                                  title: 'Remove Match Record?',
+                                  description: `Remove ${r.nickname}'s game record (${r.roomCode})?`,
+                                  onConfirm: async () => {
+                                    if (!r.id) return;
+                                    await deleteDoc(doc(db, 'race_results', r.id));
+                                    await logAdminAction(
+                                      adminUid,
+                                      adminEmail,
+                                      'Removed Match Result',
+                                      'leaderboard',
+                                      r.id,
+                                      `Removed result for ${r.nickname} in ${r.roomCode}`
+                                    );
+                                  },
+                                })
+                              }
+                              className="rounded-xl border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-100"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -910,7 +1070,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                     className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs"
                   >
                     <div>
-                      <span className="font-bold text-sky-700">{log.action}</span>
+                      <span className="font-bold text-blue-700">{log.action}</span>
                       <span className="mx-2 text-slate-400">·</span>
                       <span className="text-slate-800">{log.details}</span>
                     </div>
@@ -930,9 +1090,53 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-xs">
           <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-3xl border border-slate-200 bg-white p-6 shadow-xl">
             <h3 className="font-display text-lg font-bold text-slate-900">
-              {editingQuestion.id ? 'Edit Question' : 'Create New Question'}
+              {editingQuestion.id ? 'Edit TROJO Question' : 'Create New TROJO Question'}
             </h3>
             <form onSubmit={handleSaveQuestionSubmit} className="mt-4 space-y-4 text-xs">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block font-bold text-slate-700">TROJO Game</label>
+                  <select
+                    value={editingQuestion.gameId}
+                    onChange={(e) =>
+                      setEditingQuestion({
+                        ...editingQuestion,
+                        gameId: e.target.value as TrojoGameId,
+                      })
+                    }
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 font-semibold text-slate-900"
+                  >
+                    {TROJO_GAMES.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.emoji} {g.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {editingQuestion.gameId === 'iq_relay' && (
+                  <div>
+                    <label className="block font-bold text-slate-700">IQ Relay Field</label>
+                    <select
+                      value={editingQuestion.iqField || 'Logical Reasoning'}
+                      onChange={(e) =>
+                        setEditingQuestion({
+                          ...editingQuestion,
+                          iqField: e.target.value as IqRelayField,
+                        })
+                      }
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 font-semibold text-slate-900"
+                    >
+                      {IQ_RELAY_ALL_FIELDS.map((f) => (
+                        <option key={f} value={f}>
+                          {f}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div>
                   <label className="block font-bold text-slate-700">Category</label>
@@ -994,6 +1198,44 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                 </div>
               </div>
 
+              {editingQuestion.gameId === 'word_scramble' && (
+                <div>
+                  <label className="block font-bold text-slate-700">
+                    Scrambled Letters (e.g. P L A E N T)
+                  </label>
+                  <input
+                    type="text"
+                    value={editingQuestion.scrambledLetters || ''}
+                    onChange={(e) =>
+                      setEditingQuestion({
+                        ...editingQuestion,
+                        scrambledLetters: e.target.value,
+                      })
+                    }
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900"
+                  />
+                </div>
+              )}
+
+              {editingQuestion.gameId === 'emoji_decode' && (
+                <div>
+                  <label className="block font-bold text-slate-700">
+                    Emoji Clue (e.g. 🦁👑🌅)
+                  </label>
+                  <input
+                    type="text"
+                    value={editingQuestion.emojiClue || ''}
+                    onChange={(e) =>
+                      setEditingQuestion({
+                        ...editingQuestion,
+                        emojiClue: e.target.value,
+                      })
+                    }
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900"
+                  />
+                </div>
+              )}
+
               <div>
                 <label className="block font-bold text-slate-700">Question Text</label>
                 <textarea
@@ -1021,7 +1263,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                       onChange={() =>
                         setEditingQuestion({ ...editingQuestion, correctOption: idx })
                       }
-                      className="h-4 w-4 text-sky-600"
+                      className="h-4 w-4 text-blue-600"
                     />
                     <input
                       type="text"
@@ -1060,49 +1302,6 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                 />
               </div>
 
-              {editingQuestion.category === 'current_affairs' && (
-                <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3.5 sm:grid-cols-2">
-                  <div className="sm:col-span-2">
-                    <label className="block font-bold text-slate-700">Source URL</label>
-                    <input
-                      type="url"
-                      required
-                      value={editingQuestion.sourceUrl}
-                      onChange={(e) =>
-                        setEditingQuestion({ ...editingQuestion, sourceUrl: e.target.value })
-                      }
-                      placeholder="https://..."
-                      className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-bold text-slate-700">Verified Date</label>
-                    <input
-                      type="date"
-                      required
-                      value={editingQuestion.verifiedAt}
-                      onChange={(e) =>
-                        setEditingQuestion({ ...editingQuestion, verifiedAt: e.target.value })
-                      }
-                      className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-bold text-slate-700">
-                      Optional Expiry Date
-                    </label>
-                    <input
-                      type="date"
-                      value={editingQuestion.expiresAt}
-                      onChange={(e) =>
-                        setEditingQuestion({ ...editingQuestion, expiresAt: e.target.value })
-                      }
-                      className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900"
-                    />
-                  </div>
-                </div>
-              )}
-
               <div className="flex items-center justify-between pt-2">
                 <label className="flex items-center gap-2 font-semibold text-slate-700">
                   <input
@@ -1112,7 +1311,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                       setEditingQuestion({ ...editingQuestion, isActive: e.target.checked })
                     }
                   />
-                  <span>Active in live races</span>
+                  <span>Active in live games</span>
                 </label>
 
                 <div className="flex items-center gap-2">
@@ -1125,7 +1324,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
                   </button>
                   <button
                     type="submit"
-                    className="rounded-xl bg-sky-600 px-4 py-2 font-bold text-white hover:bg-sky-500"
+                    className="rounded-xl bg-[#2563EB] px-4 py-2 font-extrabold text-white hover:bg-blue-700"
                   >
                     Save Question
                   </button>

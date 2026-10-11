@@ -3,13 +3,14 @@ import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import {
   ArrowRight,
   Award,
-  Car,
   CheckCircle2,
   Clock,
-  Flag,
+  Gamepad2,
   KeyRound,
   Play,
+  Sparkles,
   Trophy,
+  UserCheck,
   Users,
 } from 'lucide-react';
 import { db, handleFirestoreError } from '../lib/firebase';
@@ -17,28 +18,38 @@ import {
   CAR_PALETTE,
   OperationType,
   PlayerProfile,
+  RaceResultRecord,
+  TROJO_GAMES,
+  TrojoGameId,
 } from '../game/types';
-import { RaceTrackCanvas } from '../game/RaceTrackCanvas';
 import { soundEngine } from '../lib/sound';
+import { GameTileArtwork } from '../components/GameTileArtwork';
 
 interface HomePageProps {
   profile: PlayerProfile;
   isGuest: boolean;
-  onOpenSetup: (initialPlayerMode: 'solo' | 'multiplayer') => void;
+  onOpenLibrary: () => void;
+  onSelectGame: (gameId: TrojoGameId, mode: 'solo' | 'multiplayer') => void;
+  onQuickPlayGame?: (gameId: TrojoGameId) => void;
   onOpenJoinRoom: () => void;
   onOpenLeaderboard: () => void;
+  onOpenProfile: () => void;
   onSignIn: () => void;
 }
 
 export const HomePage: React.FC<HomePageProps> = ({
   profile,
   isGuest,
-  onOpenSetup,
+  onOpenLibrary,
+  onSelectGame,
+  onQuickPlayGame,
   onOpenJoinRoom,
   onOpenLeaderboard,
+  onOpenProfile,
   onSignIn,
 }) => {
   const [publicProfiles, setPublicProfiles] = useState<PlayerProfile[]>([]);
+  const [raceResults, setRaceResults] = useState<RaceResultRecord[]>([]);
 
   useEffect(() => {
     const qProfiles = query(
@@ -53,28 +64,59 @@ export const HomePage: React.FC<HomePageProps> = ({
       (err) => handleFirestoreError(err, OperationType.LIST, 'profiles')
     );
 
-    return () => unsubProfiles();
+    const unsubResults = onSnapshot(
+      collection(db, 'race_results'),
+      (snap) => {
+        setRaceResults(
+          snap.docs.map((d) => ({ id: d.id, ...(d.data() as RaceResultRecord) }))
+        );
+      },
+      () => {}
+    );
+
+    return () => {
+      unsubProfiles();
+      unsubResults();
+    };
   }, []);
 
-  // Top 5 players for the compact homepage Leaderboard Preview
+  // Top 5 Highest Points Players for the compact homepage Leaderboard Preview
   const top5Players = useMemo(() => {
-    const eligible = publicProfiles.filter((p) => !p.isBanned && p.totalRaces > 0);
+    const scoreByPlayer = new Map<string, number>();
+    for (const r of raceResults) {
+      const pts = r.score ?? r.correctAnswers * 10;
+      const prev = scoreByPlayer.get(r.playerId) || 0;
+      if (pts > prev) {
+        scoreByPlayer.set(r.playerId, pts);
+      }
+    }
+
+    const eligible = publicProfiles
+      .filter((p) => !p.isBanned && (p.totalRaces > 0 || (scoreByPlayer.get(p.uid) || 0) > 0))
+      .map((p) => ({
+        ...p,
+        highestPoints: Math.max(
+          p.bestScore || 0,
+          scoreByPlayer.get(p.uid) || 0,
+          (p.wins || 0) * 100
+        ),
+      }));
+
     const sorted = [...eligible].sort((a, b) => {
+      if (b.highestPoints !== a.highestPoints) {
+        return b.highestPoints - a.highestPoints;
+      }
       if (b.wins !== a.wins) return b.wins - a.wins;
-      const aScore = a.bestScore || 0;
-      const bScore = b.bestScore || 0;
-      if (bScore !== aScore) return bScore - aScore;
       const aTime = a.bestTimeMs > 0 ? a.bestTimeMs : Number.MAX_SAFE_INTEGER;
       const bTime = b.bestTimeMs > 0 ? b.bestTimeMs : Number.MAX_SAFE_INTEGER;
-      if (aTime !== bTime) return aTime - bTime;
-      return b.totalRaces - a.totalRaces;
+      return aTime - bTime;
     });
     return sorted.slice(0, 5);
-  }, [publicProfiles]);
+  }, [publicProfiles, raceResults]);
 
   const getInitials = (name: string) => {
     const clean = name.trim();
-    if (!clean) return 'R';
+    if (!clean) return 'T';
     const parts = clean.split(/\s+/);
     if (parts.length >= 2) {
       return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
@@ -83,163 +125,233 @@ export const HomePage: React.FC<HomePageProps> = ({
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
-      {/* MAIN WELCOME SECTION */}
-      <section className="rounded-3xl border border-slate-200/90 bg-white p-6 shadow-xs sm:p-10">
+    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
+      {/* HERO SECTION — ATTRACTIVE AND MINIMAL */}
+      <section className="relative overflow-hidden rounded-3xl border border-slate-200/90 bg-white p-6 shadow-xs sm:p-10">
+        {/* Lightweight floating decorative game tokens */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none mb-4 flex flex-wrap items-center justify-center gap-2.5 sm:gap-3"
+        >
+          {['🏎️', '🧪', '🔤', '🟨', '🀄'].map((token, idx) => (
+            <span
+              key={token}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200/80 bg-slate-50 text-xl shadow-2xs motion-safe:animate-bounce"
+              style={{
+                animationDuration: `${2.4 + (idx % 3) * 0.4}s`,
+                animationDelay: `${idx * 0.15}s`,
+              }}
+            >
+              {token}
+            </span>
+          ))}
+        </div>
+
         <div className="mx-auto max-w-2xl text-center">
-          <div className="inline-flex items-center gap-2 rounded-xl bg-sky-50 px-3.5 py-1.5 text-xs font-bold text-sky-700">
-            <Car className="h-4 w-4 text-sky-600" />
-            <span>Brain-Powered Arcade Racing</span>
+          <div className="inline-flex items-center gap-2 rounded-full bg-purple-100 px-4 py-1 text-xs font-extrabold tracking-wider text-purple-800 uppercase">
+            <Gamepad2 className="h-3.5 w-3.5 text-purple-700" />
+            <span>TROJO — A Fun Nagar</span>
           </div>
 
-          <h1 className="mt-4 font-display text-4xl font-extrabold tracking-tight text-slate-900 sm:text-5xl">
-            Ready, Set, Solve!
+          <h1 className="mt-3 font-display text-4xl font-extrabold tracking-tight text-slate-900 sm:text-6xl">
+            LET&rsquo;S PLAY!
           </h1>
 
-          <p className="mt-3 text-base leading-relaxed text-slate-600 sm:text-lg">
-            Answer questions fast to accelerate your car <strong className="font-bold text-emerald-600">+10m forward</strong>. Wrong answers move you <strong className="font-bold text-rose-600">-5m backward</strong>. First racer across the 100m finish line wins!
+          <p className="mt-2.5 text-sm font-medium text-slate-600 sm:text-base">
+            Play Calculation Racer, Water Sort, Word Finder, 2048, and Mahjong Solitaire — solo across 20 levels or live with friends!
           </p>
         </div>
 
-        {/* THREE PROMINENT ACTION CARDS */}
-        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-3 sm:gap-6">
-          {/* 1. Play Game */}
+        {/* THREE LARGE COLORFUL SOLID BUTTONS */}
+        <div className="mx-auto mt-7 grid max-w-3xl grid-cols-1 gap-3.5 sm:grid-cols-3 sm:gap-4">
           <button
             type="button"
             onClick={() => {
               soundEngine.playClick();
-              onOpenSetup('solo');
+              onOpenLibrary();
             }}
-            className="group flex flex-col justify-between rounded-2xl border-2 border-sky-200 bg-sky-50/70 p-6 text-left transition-all hover:-translate-y-0.5 hover:border-sky-400 hover:bg-sky-50 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+            className="flex min-h-[54px] w-full items-center justify-center gap-2.5 rounded-2xl bg-[#2563EB] px-6 py-4 font-display text-base font-extrabold text-white shadow-sm transition-transform hover:-translate-y-0.5 hover:bg-blue-700 active:translate-y-0 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           >
-            <div>
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-500 text-white shadow-xs transition-transform group-hover:scale-105">
-                <Play className="h-6 w-6 fill-current" />
-              </div>
-              <h2 className="mt-4 font-display text-xl font-bold text-slate-900">
-                Play Game
-              </h2>
-              <p className="mt-1.5 text-sm leading-relaxed text-slate-600">
-                Choose your subject, difficulty, and topics to start a solo race or multiplayer match.
-              </p>
-            </div>
-            <div className="mt-5 inline-flex items-center gap-1.5 text-sm font-bold text-sky-700 group-hover:text-sky-800">
-              <span>Open Game Setup</span>
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-            </div>
+            <Play className="h-5 w-5 fill-current shrink-0" />
+            <span>Play Games</span>
           </button>
 
-          {/* 2. Create Room */}
           <button
             type="button"
             onClick={() => {
               soundEngine.playClick();
-              onOpenSetup('multiplayer');
+              onSelectGame('calculation_racer', 'multiplayer');
             }}
-            className="group flex flex-col justify-between rounded-2xl border-2 border-purple-200 bg-purple-50/70 p-6 text-left transition-all hover:-translate-y-0.5 hover:border-purple-400 hover:bg-purple-50 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+            className="flex min-h-[54px] w-full items-center justify-center gap-2.5 rounded-2xl bg-[#16A34A] px-6 py-4 font-display text-base font-extrabold text-white shadow-sm transition-transform hover:-translate-y-0.5 hover:bg-emerald-700 active:translate-y-0 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
           >
-            <div>
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-purple-600 text-white shadow-xs transition-transform group-hover:scale-105">
-                <Users className="h-6 w-6" />
-              </div>
-              <h2 className="mt-4 font-display text-xl font-bold text-slate-900">
-                Create Room
-              </h2>
-              <p className="mt-1.5 text-sm leading-relaxed text-slate-600">
-                Host a private 2-player or 4-player race room and share your 6-character code with friends.
-              </p>
-            </div>
-            <div className="mt-5 inline-flex items-center gap-1.5 text-sm font-bold text-purple-700 group-hover:text-purple-800">
-              <span>Host Multiplayer</span>
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-            </div>
+            <Users className="h-5 w-5 shrink-0" />
+            <span>Create Game Room</span>
           </button>
 
-          {/* 3. Join Room */}
           <button
             type="button"
             onClick={() => {
               soundEngine.playClick();
               onOpenJoinRoom();
             }}
-            className="group flex flex-col justify-between rounded-2xl border-2 border-emerald-200 bg-emerald-50/70 p-6 text-left transition-all hover:-translate-y-0.5 hover:border-emerald-400 hover:bg-emerald-50 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            className="flex min-h-[54px] w-full items-center justify-center gap-2.5 rounded-2xl bg-[#7C3AED] px-6 py-4 font-display text-base font-extrabold text-white shadow-sm transition-transform hover:-translate-y-0.5 hover:bg-purple-700 active:translate-y-0 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
           >
-            <div>
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-xs transition-transform group-hover:scale-105">
-                <KeyRound className="h-6 w-6" />
-              </div>
-              <h2 className="mt-4 font-display text-xl font-bold text-slate-900">
-                Join Room
-              </h2>
-              <p className="mt-1.5 text-sm leading-relaxed text-slate-600">
-                Have a room code from a friend? Enter the 6-character code to jump right into the lobby.
-              </p>
-            </div>
-            <div className="mt-5 inline-flex items-center gap-1.5 text-sm font-bold text-emerald-700 group-hover:text-emerald-800">
-              <span>Enter Room Code</span>
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-            </div>
+            <KeyRound className="h-5 w-5 shrink-0" />
+            <span>Join Game Room</span>
+          </button>
+        </div>
+      </section>
+
+      {/* GAME LIST — ROUNDED SQUARE APP TILES ARRANGED LIKE REFERENCE IMAGE */}
+      <section className="mt-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-xs sm:p-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+          <div>
+            <h2 className="font-display text-2xl font-extrabold text-slate-900">
+              Game List
+            </h2>
+            <p className="text-xs font-medium text-slate-500">
+              Tap any game icon to play solo levels or create a live multiplayer room
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              soundEngine.playClick();
+              onOpenLibrary();
+            }}
+            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-[#2563EB] px-4 py-2 text-xs font-extrabold text-white shadow-2xs transition-colors hover:bg-blue-700"
+          >
+            <span>All Games &amp; Levels</span>
+            <ArrowRight className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Guest Play / Sign-In Notice Banner */}
-        {isGuest && (
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/80 px-5 py-3.5 text-sm text-amber-900">
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="h-4 w-4 text-amber-600 shrink-0" />
-              <span>
-                Playing as <strong>{profile.nickname}</strong> (Guest Play enabled). Sign in anytime to host multiplayer rooms & save scores to the global leaderboard.
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={onSignIn}
-              className="rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-white shadow-2xs transition-colors hover:bg-amber-600 whitespace-nowrap shrink-0"
+        {/* Clean Icon Grid Matching Reference Screenshot */}
+        <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+          {TROJO_GAMES.map((game) => (
+            <div
+              key={game.id}
+              className="group flex flex-col items-center justify-between rounded-3xl border border-slate-200/90 bg-slate-50/60 p-4 text-center transition-all hover:-translate-y-1 hover:border-blue-300 hover:bg-white hover:shadow-md"
             >
-              Sign In / Create Account
-            </button>
-          </div>
-        )}
-      </section>
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playClick();
+                  if (onQuickPlayGame && game.isInteractivePuzzle) {
+                    onQuickPlayGame(game.id);
+                  } else {
+                    onSelectGame(game.id, 'solo');
+                  }
+                }}
+                className="flex flex-col items-center focus:outline-none"
+              >
+                <GameTileArtwork
+                  gameId={game.id}
+                  className="h-32 w-32 sm:h-36 sm:w-36 transition-transform duration-200 group-hover:scale-105"
+                />
+                <h3 className="mt-3 font-display text-base font-extrabold text-slate-900 sm:text-lg">
+                  {game.name}
+                </h3>
+                <span className="mt-0.5 inline-block rounded-full bg-slate-200/80 px-2.5 py-0.5 text-[10px] font-extrabold text-slate-700">
+                  {game.badgeText}
+                </span>
+              </button>
 
-      {/* LIVE RACE TRACK PREVIEW */}
-      <section className="mt-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-xs">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-            <Flag className="h-4 w-4 text-sky-600" />
-            <span>Live Race Track Preview</span>
-          </div>
-          <span className="font-mono text-xs font-semibold text-slate-500 tabular-nums">
-            +10m Correct · -5m Wrong · 100m Finish
-          </span>
+              <div className="mt-3.5 flex w-full items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playClick();
+                    if (onQuickPlayGame && game.isInteractivePuzzle) {
+                      onQuickPlayGame(game.id);
+                    } else {
+                      onSelectGame(game.id, 'solo');
+                    }
+                  }}
+                  className="flex min-h-[40px] flex-1 items-center justify-center gap-1 rounded-xl bg-[#2563EB] px-3 py-2 text-xs font-extrabold text-white shadow-2xs transition-colors hover:bg-blue-700"
+                >
+                  <Play className="h-3.5 w-3.5 fill-current" />
+                  <span>Play</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playClick();
+                    onSelectGame(game.id, 'multiplayer');
+                  }}
+                  title={`Multiplayer Room for ${game.name}`}
+                  className="inline-flex min-h-[40px] items-center justify-center gap-1 rounded-xl bg-[#16A34A] px-2.5 py-2 text-xs font-extrabold text-white shadow-2xs transition-colors hover:bg-emerald-700"
+                >
+                  <Users className="h-3.5 w-3.5" />
+                  <span>2P/4P</span>
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
-        <RaceTrackCanvas
-          maxLanes={2}
-          racers={[
-            {
-              playerId: profile.uid,
-              nickname: profile.nickname,
-              carColor: profile.carColor,
-              distance: 40,
-              correctAnswers: 4,
-              wrongAnswers: 0,
-              finished: false,
-              isCurrentUser: true,
-            },
-            {
-              playerId: 'rival_preview',
-              nickname: 'Rival Racer',
-              carColor: profile.carColor === 'purple' ? 'red' : 'purple',
-              distance: 25,
-              correctAnswers: 3,
-              wrongAnswers: 1,
-              finished: false,
-            },
-          ]}
-        />
       </section>
 
-      {/* COMPACT LEADERBOARD PREVIEW (TOP 5 PLAYERS) */}
+      {/* GAMING PROFILE CALLOUT SECTION */}
+      {isGuest && (
+        <section className="mt-8 rounded-3xl border-2 border-orange-200 bg-orange-50/60 p-6 shadow-xs sm:p-7">
+          <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
+            <div>
+              <div className="inline-flex items-center gap-1.5 rounded-xl bg-orange-100 px-3 py-1 text-xs font-extrabold text-orange-800">
+                <Sparkles className="h-3.5 w-3.5 text-orange-600" />
+                <span>Level Up Your Experience</span>
+              </div>
+              <h2 className="mt-2 font-display text-xl font-extrabold text-slate-900 sm:text-2xl">
+                Create a Gaming Profile
+              </h2>
+              <p className="mt-1 text-xs text-slate-600 sm:text-sm">
+                Currently playing as <strong>{profile.nickname}</strong> (Guest progress is saved locally on this device only).
+              </p>
+
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-bold text-slate-700 sm:grid-cols-4">
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <span>Compete on leaderboards</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <span>Save scores &amp; level progress</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <span>Access results across devices</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <span>Host live multiplayer rooms</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2.5 sm:flex-row shrink-0">
+              <button
+                type="button"
+                onClick={onSignIn}
+                className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-2xl bg-[#F97316] px-5 py-3 text-xs font-extrabold text-white shadow-xs transition-colors hover:bg-orange-600"
+              >
+                <UserCheck className="h-4 w-4" />
+                <span>Create a Gaming Profile</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onOpenProfile}
+                className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-xs font-extrabold text-slate-800 transition-colors hover:bg-slate-50"
+              >
+                <span>Access My Profile</span>
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* COMPACT LEADERBOARD PREVIEW (TOP 5 HIGHEST POINTS) */}
       <section className="mt-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-xs sm:p-8">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-3">
@@ -247,11 +359,11 @@ export const HomePage: React.FC<HomePageProps> = ({
               <Trophy className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="font-display text-xl font-bold text-slate-900">
-                Top Racers
+              <h2 className="font-display text-xl font-extrabold text-slate-900">
+                Top 5 Highest Points
               </h2>
               <p className="text-xs text-slate-500">
-                Top 5 players ranked by verified race wins & scores
+                Top 5 highest points across TROJO — A Fun Nagar sections
               </p>
             </div>
           </div>
@@ -262,9 +374,9 @@ export const HomePage: React.FC<HomePageProps> = ({
               soundEngine.playClick();
               onOpenLeaderboard();
             }}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 transition-colors hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700"
+            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-[#2563EB] px-4 py-2 text-xs font-extrabold text-white transition-colors hover:bg-blue-700"
           >
-            <span>View Full Leaderboard</span>
+            <span>View All Top 5 Sections</span>
             <ArrowRight className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -273,10 +385,10 @@ export const HomePage: React.FC<HomePageProps> = ({
           <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 py-10 text-center">
             <Award className="mx-auto h-8 w-8 text-amber-500" />
             <p className="mt-2.5 text-sm font-bold text-slate-800">
-              No Race Records Yet
+              No Verified Scores Yet
             </p>
             <p className="mx-auto mt-1 max-w-md text-xs text-slate-500">
-              Finish a race while signed in to claim the #1 spot on the leaderboard!
+              Create a Gaming Profile and complete a match to claim a Top 5 spot on TROJO!
             </p>
           </div>
         ) : (
@@ -324,22 +436,15 @@ export const HomePage: React.FC<HomePageProps> = ({
                         )}
                       </p>
                       <p className="text-xs text-slate-500">
-                        {entry.totalRaces} {entry.totalRaces === 1 ? 'race' : 'races'} completed
+                        {entry.totalRaces} {entry.totalRaces === 1 ? 'game' : 'games'} · {entry.wins} {entry.wins === 1 ? 'win' : 'wins'}
                       </p>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-4 text-right font-mono text-xs tabular-nums shrink-0">
-                    <div>
-                      <span className="block font-bold text-emerald-600">
-                        {entry.wins} {entry.wins === 1 ? 'Win' : 'Wins'}
-                      </span>
-                      {entry.bestScore !== undefined && entry.bestScore > 0 && (
-                        <span className="text-[11px] text-slate-500">
-                          Best: {entry.bestScore} pts
-                        </span>
-                      )}
-                    </div>
+                    <span className="rounded-xl bg-purple-50 px-3 py-1.5 font-extrabold text-purple-700">
+                      {entry.highestPoints} pts
+                    </span>
                     {entry.bestTimeMs > 0 && (
                       <div className="hidden sm:flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-slate-700 font-semibold">
                         <Clock className="h-3.5 w-3.5 text-sky-600" />

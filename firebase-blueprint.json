@@ -64,6 +64,12 @@
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "gameId": { "type": "string", "enum": ["calculation_racer", "water_sort", "word_finder", "game_2048", "mahjong_solitaire", "cheat_your_friend", "solve_the_puzzle", "word_scramble", "emoji_decode", "quick_quiz", "iq_relay"] },
+        "iqField": { "type": "string", "enum": ["logical", "math", "pattern", "verbal", "spatial", "memory"] },
+        "scrambledLetters": { "type": "string", "maxLength": 120 },
+        "emojiClue": { "type": "string", "maxLength": 120 },
+        "memoryTarget": { "type": "string", "maxLength": 120 },
+        "acceptedAnswers": { "type": "array" },
         "category": { "type": "string", "enum": ["math", "gk", "science", "current_affairs"] },
         "subcategory": { "type": "string", "maxLength": 60 },
         "difficulty": { "type": "string", "enum": ["easy", "medium", "hard"] },
@@ -114,6 +120,8 @@
       "type": "object",
       "properties": {
         "roomCode": { "type": "string", "minLength": 6, "maxLength": 6, "pattern": "^[A-Z0-9]{6}$" },
+        "gameId": { "type": "string", "enum": ["calculation_racer", "water_sort", "word_finder", "game_2048", "mahjong_solitaire", "cheat_your_friend", "solve_the_puzzle", "word_scramble", "emoji_decode", "quick_quiz", "iq_relay"] },
+        "iqFields": { "type": "array" },
         "hostId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "hostNickname": { "type": "string", "minLength": 2, "maxLength": 20 },
         "maxPlayers": { "type": "number", "enum": [2, 4] },
@@ -156,6 +164,8 @@
         "placement": { "type": "number" },
         "connected": { "type": "boolean" },
         "lastSeenAtMs": { "type": "number" },
+        "bluffText": { "type": "string", "maxLength": 120 },
+        "votedOption": { "type": "string", "maxLength": 120 },
         "joinedAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
@@ -184,6 +194,7 @@
       "type": "object",
       "properties": {
         "roomCode": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "gameId": { "type": "string", "enum": ["calculation_racer", "water_sort", "word_finder", "game_2048", "mahjong_solitaire", "cheat_your_friend", "solve_the_puzzle", "word_scramble", "emoji_decode", "quick_quiz", "iq_relay"] },
         "playerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "nickname": { "type": "string", "minLength": 2, "maxLength": 20 },
         "carColor": { "type": "string", "enum": ["blue", "red", "green", "purple"] },
