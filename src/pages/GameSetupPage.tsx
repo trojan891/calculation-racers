@@ -200,7 +200,7 @@ export const GameSetupPage: React.FC<GameSetupPageProps> = ({
         </div>
 
         {/* Clean Game Logo Selection Grid */}
-        <div className="mt-8 grid grid-cols-2 gap-5 sm:grid-cols-3 md:grid-cols-5 sm:gap-6">
+        <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-6 sm:gap-5">
           {TROJO_GAMES.map((game) => (
             <button
               key={game.id}
@@ -261,7 +261,7 @@ export const GameSetupPage: React.FC<GameSetupPageProps> = ({
       </div>
 
       {/* Horizontal Mini Logo Strip */}
-      <div className="mt-4 grid grid-cols-5 gap-2.5 sm:gap-3">
+      <div className="mt-4 grid grid-cols-3 sm:grid-cols-6 gap-2.5 sm:gap-3">
         {TROJO_GAMES.map((game) => {
           const isCurrent = game.id === selectedGameId;
           return (

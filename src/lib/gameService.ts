@@ -103,12 +103,16 @@ export async function ensurePlayerProfile(user: User): Promise<PlayerProfile> {
     });
 
     if (user.email) {
-      await setDoc(doc(db, 'users_private', user.uid), {
-        uid: user.uid,
-        email: user.email.slice(0, 254),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      try {
+        await setDoc(doc(db, 'users_private', user.uid), {
+          uid: user.uid,
+          email: user.email.slice(0, 254),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (privErr) {
+        console.warn('Private user doc write skipped/ignored:', privErr);
+      }
     }
 
     return newProfile;

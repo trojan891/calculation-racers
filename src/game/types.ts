@@ -9,6 +9,7 @@ export type QuestionTimeOption = 10 | 15 | 20 | 30;
 
 export type TrojoGameId =
   | 'calculation_racer'
+  | 'circular_racer'
   | 'water_sort'
   | 'word_finder'
   | 'game_2048'
@@ -69,6 +70,22 @@ export const TROJO_GAMES: TrojoGameCatalogItem[] = [
     supportsSolo: true,
     supportsMultiplayer: true,
     isInteractivePuzzle: false,
+    totalLevels: 20,
+    defaultQuestionCount: 10,
+    defaultTimeLimitSec: 20,
+  },
+  {
+    id: 'circular_racer',
+    name: 'Circular Racer',
+    tagline: 'Steer, drift & speed across 2D circular circuits!',
+    shortDescription:
+      'Control your race car with steering and acceleration across 20 circular and curved tracks with AI opponents and drift physics.',
+    emoji: '🏁',
+    accentColor: 'blue',
+    badgeText: '2D Circuit Racing · 20 Tracks',
+    supportsSolo: true,
+    supportsMultiplayer: true,
+    isInteractivePuzzle: true,
     totalLevels: 20,
     defaultQuestionCount: 10,
     defaultTimeLimitSec: 20,
@@ -141,21 +158,23 @@ export const TROJO_GAMES: TrojoGameCatalogItem[] = [
 
 export const TROJO_GAME_MAP: Record<TrojoGameId, TrojoGameCatalogItem> = {
   calculation_racer: TROJO_GAMES[0],
-  water_sort: TROJO_GAMES[1],
-  word_finder: TROJO_GAMES[2],
-  game_2048: TROJO_GAMES[3],
-  mahjong_solitaire: TROJO_GAMES[4],
+  circular_racer: TROJO_GAMES[1],
+  water_sort: TROJO_GAMES[2],
+  word_finder: TROJO_GAMES[3],
+  game_2048: TROJO_GAMES[4],
+  mahjong_solitaire: TROJO_GAMES[5],
   // Fallback mappings for legacy records
-  cheat_your_friend: TROJO_GAMES[1],
-  solve_the_puzzle: TROJO_GAMES[3],
-  word_scramble: TROJO_GAMES[2],
-  emoji_decode: TROJO_GAMES[4],
+  cheat_your_friend: TROJO_GAMES[2],
+  solve_the_puzzle: TROJO_GAMES[4],
+  word_scramble: TROJO_GAMES[3],
+  emoji_decode: TROJO_GAMES[5],
   quick_quiz: TROJO_GAMES[0],
-  iq_relay: TROJO_GAMES[3],
+  iq_relay: TROJO_GAMES[4],
 };
 
 export function isInteractivePuzzleGame(gameId?: TrojoGameId): boolean {
   return (
+    gameId === 'circular_racer' ||
     gameId === 'water_sort' ||
     gameId === 'word_finder' ||
     gameId === 'game_2048' ||

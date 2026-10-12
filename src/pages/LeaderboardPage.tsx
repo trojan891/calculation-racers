@@ -342,14 +342,65 @@ export const LeaderboardPage: React.FC<LeaderboardPageProps> = ({
             }}
             className="min-h-[46px] rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-extrabold text-slate-900 shadow-2xs focus:border-[#2563EB] focus:outline-none"
           >
-            <option value="all">All Games</option>
+            <option value="all">🏆 All Games (Platform Total)</option>
             {TROJO_GAMES.map((g) => (
               <option key={g.id} value={g.id}>
-                {g.name}
+                {g.emoji} {g.name}
               </option>
             ))}
           </select>
         </div>
+      </div>
+
+      {/* Game Quick Switcher Pills */}
+      <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-1">
+        <button
+          type="button"
+          onClick={() => {
+            soundEngine.playClick();
+            setGameFilter('all');
+          }}
+          className={`shrink-0 rounded-xl px-3.5 py-1.5 text-xs font-extrabold transition-colors ${
+            gameFilter === 'all'
+              ? 'bg-slate-900 text-white shadow-2xs'
+              : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          🏆 All Games
+        </button>
+        {TROJO_GAMES.map((g) => {
+          const active = gameFilter === g.id;
+          return (
+            <button
+              key={g.id}
+              type="button"
+              onClick={() => {
+                soundEngine.playClick();
+                setGameFilter(g.id);
+              }}
+              className={`flex shrink-0 items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-extrabold transition-colors ${
+                active
+                  ? 'bg-[#2563EB] text-white shadow-2xs'
+                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <span>{g.emoji}</span>
+              <span>{g.name}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Metric Context Explainer */}
+      <div className="mt-3 flex items-center justify-between text-[11px] font-bold text-slate-500">
+        <span>
+          {gameFilter === 'all'
+            ? 'Ranking: Overall Verified Championship Points across all games played'
+            : `Ranking: Top 10 players by best verified record in ${
+                TROJO_GAMES.find((g) => g.id === gameFilter)?.name || 'Game'
+              }`}
+        </span>
+        <span className="font-mono text-slate-400">Top 10 Only</span>
       </div>
 
       {/* Loading / Error / Empty / Top 10 List */}

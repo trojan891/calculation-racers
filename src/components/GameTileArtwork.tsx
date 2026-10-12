@@ -11,6 +11,167 @@ export const GameTileArtwork: React.FC<GameTileArtworkProps> = ({
   className = 'h-36 w-36 sm:h-40 sm:w-40',
 }) => {
   switch (gameId) {
+    case 'circular_racer':
+      return (
+        <div
+          className={`relative overflow-hidden rounded-[28px] bg-[#0A1329] shadow-md select-none ${className}`}
+        >
+          <svg
+            viewBox="0 0 200 200"
+            className="h-full w-full"
+            aria-label="Circular Racer"
+          >
+            {/* Outer Circuit Asphalt Loop */}
+            <circle cx="100" cy="100" r="88" fill="#1E293B" />
+            <circle cx="100" cy="100" r="84" fill="#0F172A" />
+
+            {/* Red & White Outer Kerbs */}
+            <circle
+              cx="100"
+              cy="100"
+              r="84"
+              fill="none"
+              stroke="#EF4444"
+              strokeWidth="5"
+              strokeDasharray="16 16"
+            />
+            <circle
+              cx="100"
+              cy="100"
+              r="84"
+              fill="none"
+              stroke="#FFFFFF"
+              strokeWidth="5"
+              strokeDasharray="16 16"
+              strokeDashoffset="16"
+            />
+
+            {/* Asphalt Track Surface */}
+            <circle
+              cx="100"
+              cy="100"
+              r="60"
+              fill="none"
+              stroke="#1E293B"
+              strokeWidth="38"
+            />
+
+            {/* Center Dashed White Racing Line */}
+            <circle
+              cx="100"
+              cy="100"
+              r="60"
+              fill="none"
+              stroke="#FACC15"
+              strokeWidth="2.5"
+              strokeDasharray="12 12"
+              opacity="0.9"
+            />
+
+            {/* Inner Green Island */}
+            <circle cx="100" cy="100" r="39" fill="#047857" />
+            {/* Inner Red & White Kerbs */}
+            <circle
+              cx="100"
+              cy="100"
+              r="40"
+              fill="none"
+              stroke="#EF4444"
+              strokeWidth="4"
+              strokeDasharray="10 10"
+            />
+            <circle
+              cx="100"
+              cy="100"
+              r="40"
+              fill="none"
+              stroke="#FFFFFF"
+              strokeWidth="4"
+              strokeDasharray="10 10"
+              strokeDashoffset="10"
+            />
+
+            {/* Center Trophy Emblem */}
+            <circle cx="100" cy="100" r="22" fill="#065F46" />
+            <text
+              x="100"
+              y="108"
+              textAnchor="middle"
+              fill="#FDE047"
+              fontSize="24"
+              fontWeight="900"
+            >
+              🏁
+            </text>
+
+            {/* Start / Finish Line Checkered Strip */}
+            <line
+              x1="60"
+              y1="98"
+              x2="100"
+              y2="98"
+              stroke="#FFFFFF"
+              strokeWidth="6"
+              strokeDasharray="6 6"
+            />
+            <line
+              x1="60"
+              y1="102"
+              x2="100"
+              y2="102"
+              stroke="#000000"
+              strokeWidth="6"
+              strokeDasharray="6 6"
+            />
+
+            {/* Drifting Sports Car on the Lower Curve */}
+            <g transform="translate(100, 158) rotate(-18)">
+              {/* Tire Skid Smoke Particles */}
+              <circle cx="-28" cy="6" r="4.5" fill="#E2E8F0" opacity="0.6" />
+              <circle cx="-34" cy="9" r="6" fill="#CBD5E1" opacity="0.4" />
+              {/* Drift Skid Marks */}
+              <path
+                d="M-36 12 Q-18 8 0 8"
+                fill="none"
+                stroke="#020617"
+                strokeWidth="3.5"
+                opacity="0.75"
+              />
+
+              {/* Rear Spoiler */}
+              <rect x="-24" y="-7" width="6" height="14" rx="2" fill="#0F172A" />
+              {/* Car Body (Streamlined Aerodynamic GT Racer) */}
+              <path
+                d="M-20 -7 L14 -6 L26 0 L14 6 L-20 7 Z"
+                fill="#EF4444"
+                stroke="#FFFFFF"
+                strokeWidth="2"
+              />
+              {/* Yellow Racing Stripe */}
+              <path d="M-18 -1.5 L24 -0.5 L24 0.5 L-18 1.5 Z" fill="#FACC15" />
+              {/* Cockpit / Windshield */}
+              <path
+                d="M-4 -4.5 L8 -3.5 L12 0 L8 3.5 L-4 4.5 Z"
+                fill="#0F172A"
+                stroke="#38BDF8"
+                strokeWidth="1.2"
+              />
+              {/* Wheels */}
+              <rect x="-14" y="-9" width="8" height="3" rx="1.5" fill="#020617" />
+              <rect x="-14" y="6" width="8" height="3" rx="1.5" fill="#020617" />
+              <rect x="8" y="-9" width="8" height="3" rx="1.5" fill="#020617" />
+              <rect x="8" y="6" width="8" height="3" rx="1.5" fill="#020617" />
+              {/* Headlights beam */}
+              <polygon
+                points="24,-4 52,-14 52,14 24,4"
+                fill="#FEF08A"
+                opacity="0.3"
+              />
+            </g>
+          </svg>
+        </div>
+      );
+
     case 'water_sort':
       return (
         <div

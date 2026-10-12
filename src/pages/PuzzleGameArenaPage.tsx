@@ -54,6 +54,10 @@ import {
   getSocialShareLinks,
 } from '../lib/shareUtils';
 import { GameTileArtwork } from '../components/GameTileArtwork';
+import {
+  CircularRacerCanvas,
+  CircularRacerFinishData,
+} from '../game/circularRacer/CircularRacerCanvas';
 
 interface PuzzleGameArenaPageProps {
   gameId: TrojoGameId;
@@ -759,6 +763,7 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
   const [startedAtMs] = useState<number>(() => Date.now());
   const [elapsedMs, setElapsedMs] = useState(0);
   const [rematchBusy, setRematchBusy] = useState(false);
+  const [circularProgress, setCircularProgress] = useState(0);
   const savedResultRef = useRef(false);
 
   // Share & Confirmation Modal State
@@ -935,6 +940,7 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
   // Compute live completion percentage (0..100) for multiplayer progress bar
   const completionPct = useMemo(() => {
     if (levelSolved) return 100;
+    if (gameId === 'circular_racer') return circularProgress;
     if (gameId === 'water_sort') {
       const nonEmpty = tubes.filter((t) => t.length > 0);
       if (nonEmpty.length === 0) return 0;
@@ -965,6 +971,7 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
   }, [
     levelSolved,
     gameId,
+    circularProgress,
     tubes,
     wfSpec.words.length,
     solvedWords.length,
@@ -1138,6 +1145,34 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
       mistakesCount,
       handleFinalizeMatch,
     ]
+  );
+
+  // ============================================================================
+  // CIRCULAR RACER HANDLERS
+  // ============================================================================
+  const handleCircularRacerFinish = useCallback(
+    (data: CircularRacerFinishData) => {
+      soundEngine.playVictory();
+      setScore(data.score);
+      setLevelSolved(true);
+      setCircularProgress(100);
+      setMovesCount(data.lapsCompleted * 10);
+      setMistakesCount(data.placement > 1 ? data.placement - 1 : 0);
+
+      const nextLevel = Math.min(20, currentLevel + 1);
+      try {
+        const stored = Number(localStorage.getItem('trojo_unlocked_lvl_circular_racer') || '1');
+        if (nextLevel > stored) {
+          localStorage.setItem('trojo_unlocked_lvl_circular_racer', String(nextLevel));
+        }
+      } catch {
+        // ignore
+      }
+
+      syncMultiplayerProgress(data.score, data.lapsCompleted * 10, 0, 100, true);
+      handleFinalizeMatch(data.score);
+    },
+    [currentLevel, syncMultiplayerProgress, handleFinalizeMatch]
   );
 
   // ============================================================================
@@ -1981,6 +2016,62 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
     );
   }
 
+  if (gameId === 'circular_racer') {
+    return (
+      <div className="fixed inset-0 z-40 h-[100dvh] w-[100dvw] overflow-hidden bg-slate-950 select-none">
+        <CircularRacerCanvas
+          level={currentLevel}
+          playerColor={profile.carColor}
+          playerNickname={profile.nickname}
+          isMultiplayer={isMultiplayer}
+          onFinish={handleCircularRacerFinish}
+          onProgressUpdate={(pct, liveScore) => {
+            setCircularProgress(pct);
+            syncMultiplayerProgress(liveScore, 10, 0, pct, false);
+          }}
+          onExitRequest={() => setExitConfirmOpen(true)}
+        />
+
+        {/* Exit Active Game Confirmation Modal */}
+        {exitConfirmOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-2xl">
+              <h3 className="font-display text-lg font-black text-slate-900">
+                Leave Active Game?
+              </h3>
+              <p className="mt-1.5 text-xs font-semibold text-slate-500">
+                Your current race progress will not be saved if you exit now.
+              </p>
+              <div className="mt-5 grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playClick();
+                    setExitConfirmOpen(false);
+                  }}
+                  className="min-h-[44px] rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-extrabold text-slate-700 hover:bg-slate-100"
+                >
+                  Keep Playing
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playClick();
+                    setExitConfirmOpen(false);
+                    onExitToHome();
+                  }}
+                  className="min-h-[44px] rounded-2xl bg-rose-600 px-4 py-2.5 text-xs font-extrabold text-white hover:bg-rose-700"
+                >
+                  Exit Game
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto flex h-[100dvh] w-full max-w-3xl flex-col justify-between overflow-hidden px-2.5 py-2 select-none sm:px-4 sm:py-3">
       {/* Compact Top HUD Bar: Exit, Game + Level, Progress Bar, Score, Finish Game */}
@@ -2151,6 +2242,7 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
           </div>
         </div>
       )}
+
 
       {/* ==================================================================== */}
       {/* 1. WATER SORT PUZZLE BOARD (Compact Mobile-Friendly Tubes)           */}

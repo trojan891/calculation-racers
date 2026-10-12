@@ -26,7 +26,7 @@ service cloud.firestore {
       return request.auth != null;
     }
     function isVerifiedUser() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+      return isSignedIn();
     }
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
@@ -194,7 +194,7 @@ service cloud.firestore {
       ]) &&
       isValidId(data.id) &&
       (!('gameId' in data) || (data.gameId is string && data.gameId in [
-        'calculation_racer', 'water_sort', 'word_finder', 'game_2048', 'mahjong_solitaire',
+        'calculation_racer', 'circular_racer', 'water_sort', 'word_finder', 'game_2048', 'mahjong_solitaire',
         'cheat_your_friend', 'solve_the_puzzle', 'word_scramble', 'emoji_decode', 'quick_quiz', 'iq_relay'
       ])) &&
       (!('iqField' in data) || (data.iqField is string && data.iqField.size() <= 60)) &&
@@ -325,7 +325,7 @@ service cloud.firestore {
       data.hostNickname is string && data.hostNickname.size() >= 2 && data.hostNickname.size() <= 20 &&
       data.maxPlayers is int && data.maxPlayers in [2, 3, 4, 8] &&
       (!('gameId' in data) || (data.gameId is string && data.gameId in [
-        'calculation_racer', 'water_sort', 'word_finder', 'game_2048', 'mahjong_solitaire',
+        'calculation_racer', 'circular_racer', 'water_sort', 'word_finder', 'game_2048', 'mahjong_solitaire',
         'cheat_your_friend', 'solve_the_puzzle', 'word_scramble', 'emoji_decode', 'quick_quiz', 'iq_relay'
       ])) &&
       (!('iqFields' in data) || (data.iqFields is list && data.iqFields.size() >= 1 && data.iqFields.size() <= 10)) &&
@@ -550,7 +550,7 @@ service cloud.firestore {
       data.carColor is string && data.carColor in ['blue', 'red', 'green', 'purple'] &&
       data.mode is string && data.mode in ['solo', '2p', '3p', '4p', '8p', 'timed'] &&
       (!('gameId' in data) || (data.gameId is string && data.gameId in [
-        'calculation_racer', 'water_sort', 'word_finder', 'game_2048', 'mahjong_solitaire',
+        'calculation_racer', 'circular_racer', 'water_sort', 'word_finder', 'game_2048', 'mahjong_solitaire',
         'cheat_your_friend', 'solve_the_puzzle', 'word_scramble', 'emoji_decode', 'quick_quiz', 'iq_relay'
       ])) &&
       data.category is string && data.category in ['math', 'gk', 'science', 'current_affairs'] &&

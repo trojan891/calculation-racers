@@ -57,6 +57,7 @@ import { PuzzleGameArenaPage } from './pages/PuzzleGameArenaPage';
 import { LeaderboardPage } from './pages/LeaderboardPage';
 import { ProfileAndScoresPage } from './pages/ProfileAndScoresPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
+import { AuthModal } from './components/AuthModal';
 
 const GUEST_PROFILE_STORAGE_KEY = 'trojo_guest_profile_v1';
 const GUEST_HISTORY_STORAGE_KEY = 'trojo_guest_history_v1';
@@ -215,6 +216,7 @@ export function App() {
     useState<QuestionTimeOption>(20);
   const [activeQuestions, setActiveQuestions] = useState<QuestionItem[]>([]);
   const [authBannerError, setAuthBannerError] = useState<string | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
 
   // Inspect URL query params (?room=CODE) or pathname (/admin)
   useEffect(() => {
@@ -650,16 +652,19 @@ export function App() {
                 </button>
               )}
 
-              {/* Google Sign-In / Sign-Out */}
+              {/* Sign-In / Sign-Out */}
               {authReady &&
                 (isGuest ? (
                   <button
                     type="button"
-                    onClick={handleGoogleSignIn}
-                    className="flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[#2563EB] px-3 py-1.5 text-xs font-extrabold text-white shadow-2xs transition-colors hover:bg-blue-700"
+                    onClick={() => {
+                      soundEngine.playClick();
+                      setAuthModalOpen(true);
+                    }}
+                    className="flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[#2563EB] px-3.5 py-1.5 text-xs font-extrabold text-white shadow-2xs transition-colors hover:bg-blue-700"
                   >
                     <LogIn className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Sign In</span>
+                    <span>Sign In</span>
                   </button>
                 ) : (
                   <button
@@ -781,7 +786,7 @@ export function App() {
               onOpenJoinRoom={() => setView('join')}
               onOpenLeaderboard={() => setView('leaderboard')}
               onOpenProfile={() => setView('profile')}
-              onSignIn={handleGoogleSignIn}
+              onSignIn={() => setAuthModalOpen(true)}
             />
           )}
 
@@ -818,7 +823,7 @@ export function App() {
               onCreateRoom={handleCreateRoom}
               onOpenJoinRoom={() => setView('join')}
               onBackHome={() => setView('home')}
-              onSignIn={handleGoogleSignIn}
+              onSignIn={() => setAuthModalOpen(true)}
             />
           )}
 
@@ -834,7 +839,7 @@ export function App() {
                 setView('setup');
               }}
               onBackHome={() => setView('home')}
-              onSignIn={handleGoogleSignIn}
+              onSignIn={() => setAuthModalOpen(true)}
             />
           )}
 
@@ -933,7 +938,7 @@ export function App() {
               profile={profile}
               isGuest={isGuest}
               onUpdateProfileState={(next) => setProfile(next)}
-              onSignInGoogle={handleGoogleSignIn}
+              onSignInGoogle={() => setAuthModalOpen(true)}
               onBackHome={() => setView('home')}
             />
           )}
@@ -973,6 +978,13 @@ export function App() {
             </div>
           </footer>
         )}
+
+        {/* Universal Robust Auth Modal (Email/Password & Google) */}
+        <AuthModal
+          isOpen={authModalOpen}
+          onClose={() => setAuthModalOpen(false)}
+          onSuccess={() => setAuthModalOpen(false)}
+        />
       </div>
     </AppErrorBoundary>
   );
