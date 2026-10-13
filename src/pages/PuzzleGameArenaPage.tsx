@@ -1175,6 +1175,16 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
     [currentLevel, syncMultiplayerProgress, handleFinalizeMatch]
   );
 
+  const handleCircularProgressUpdate = useCallback(
+    (pct: number, liveScore: number) => {
+      setCircularProgress(pct);
+      if (isMultiplayer) {
+        syncMultiplayerProgress(liveScore, 10, 0, pct, false);
+      }
+    },
+    [isMultiplayer, syncMultiplayerProgress]
+  );
+
   // ============================================================================
   // WATER SORT HANDLERS
   // ============================================================================
@@ -2021,14 +2031,14 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
       <div className="fixed inset-0 z-40 h-[100dvh] w-[100dvw] overflow-hidden bg-slate-950 select-none">
         <CircularRacerCanvas
           level={currentLevel}
+          playerId={profile.uid}
           playerColor={profile.carColor}
           playerNickname={profile.nickname}
           isMultiplayer={isMultiplayer}
+          roomPlayers={roomPlayers}
+          roomCode={roomCode}
           onFinish={handleCircularRacerFinish}
-          onProgressUpdate={(pct, liveScore) => {
-            setCircularProgress(pct);
-            syncMultiplayerProgress(liveScore, 10, 0, pct, false);
-          }}
+          onProgressUpdate={handleCircularProgressUpdate}
           onExitRequest={() => setExitConfirmOpen(true)}
         />
 
