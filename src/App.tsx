@@ -773,12 +773,20 @@ export function App() {
               }}
               onSelectGame={(gameId, mode) => {
                 setSelectedGameId(gameId);
+                if (gameId === 'ludo') {
+                  setView('arena');
+                  return;
+                }
                 setSetupViewMode('configure');
                 setSetupPlayerMode(mode);
                 setView('setup');
               }}
               onQuickPlayGame={(gameId) => {
                 setSelectedGameId(gameId);
+                if (gameId === 'ludo') {
+                  setView('arena');
+                  return;
+                }
                 setSetupViewMode('configure');
                 setSetupPlayerMode('solo');
                 setView('setup');

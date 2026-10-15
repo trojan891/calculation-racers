@@ -58,6 +58,7 @@ import {
   CircularRacerCanvas,
   CircularRacerFinishData,
 } from '../game/circularRacer/CircularRacerCanvas';
+import { LudoArena } from '../game/ludo/LudoArena';
 
 interface PuzzleGameArenaPageProps {
   gameId: TrojoGameId;
@@ -2084,8 +2085,63 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
     );
   }
 
+  if (gameId === 'ludo') {
+    return (
+      <div className="fixed inset-0 z-40 h-[100dvh] w-[100dvw] overflow-hidden bg-slate-950 select-none">
+        <LudoArena
+          initialCount={4}
+          initialMode={isMultiplayer ? 'local' : 'solo'}
+          userNickname={profile.nickname}
+          onExit={() => setExitConfirmOpen(true)}
+          onMatchFinish={(winnerColor, winnerName) => {
+            const finalScore = 1000;
+            setScore(finalScore);
+            handleFinalizeMatch(finalScore);
+          }}
+        />
+
+        {/* Exit Active Game Confirmation Modal */}
+        {exitConfirmOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-2xl">
+              <h3 className="font-display text-lg font-black text-slate-900">
+                Leave Active Game?
+              </h3>
+              <p className="mt-1.5 text-xs font-semibold text-slate-500">
+                Your current Ludo match progress will end if you exit now.
+              </p>
+              <div className="mt-5 grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playClick();
+                    setExitConfirmOpen(false);
+                  }}
+                  className="min-h-[44px] rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-extrabold text-slate-700 hover:bg-slate-100"
+                >
+                  Keep Playing
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playClick();
+                    setExitConfirmOpen(false);
+                    onExitToHome();
+                  }}
+                  className="min-h-[44px] rounded-2xl bg-rose-600 px-4 py-2.5 text-xs font-extrabold text-white hover:bg-rose-700"
+                >
+                  Exit to Home
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className="mx-auto flex h-[100dvh] w-full max-w-7xl flex-col justify-between overflow-hidden px-2 py-2 select-none sm:px-6 sm:py-3">
+    <div className="mx-auto flex h-[100dvh] w-full max-w-full flex-col justify-between overflow-hidden px-1.5 py-1 select-none sm:px-4 sm:py-2">
       {/* Compact Top HUD Bar: Exit, Game + Level, Progress Bar, Score, Finish Game */}
       <div className="mb-1.5 shrink-0 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-2xs sm:px-4">
         <div className="flex flex-wrap items-center justify-between gap-2">

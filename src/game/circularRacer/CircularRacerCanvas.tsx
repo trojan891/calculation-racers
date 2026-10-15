@@ -868,16 +868,19 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
       // ----------------------------------------------------------------------
       if (player && raceStarted && !player.finished) {
         const joy = joystickVectorRef.current;
-        const braking =
-          isBrakingRef.current || keysRef.current.down;
-        player.isBraking = braking;
 
         // Realistic acceleration and braking speeds
-        const CRUISE_SPEED = 6.0;
-        const BOOST_SPEED = 7.2;
-        const ACCEL_RATE = 5.2 * dt;
-        const BRAKE_DECEL = 10.5 * dt;
-        const MIN_BRAKE_SPEED = 0.5;
+        const isJoyBoosting = joy.active && joy.y < -0.25;
+        const isJoyBraking = joy.active && joy.y > 0.25;
+        const braking =
+          isBrakingRef.current || keysRef.current.down || isJoyBraking;
+        player.isBraking = braking;
+
+        const CRUISE_SPEED = 5.8;
+        const BOOST_SPEED = 7.4;
+        const ACCEL_RATE = 6.0 * dt;
+        const BRAKE_DECEL = 11.0 * dt;
+        const MIN_BRAKE_SPEED = 0.6;
 
         // Handle Acceleration & Braking
         if (braking) {
@@ -885,36 +888,25 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
             player.speed = Math.max(MIN_BRAKE_SPEED, player.speed - BRAKE_DECEL);
           }
         } else {
-          const isBoosting = keysRef.current.up || (joy.active && joy.y < -0.7);
+          const isBoosting = keysRef.current.up || isJoyBoosting;
           const targetSpeed = isBoosting ? BOOST_SPEED : CRUISE_SPEED;
 
           if (player.speed < targetSpeed) {
             player.speed = Math.min(targetSpeed, player.speed + ACCEL_RATE);
           } else if (player.speed > targetSpeed) {
-            player.speed = Math.max(targetSpeed, player.speed - 2.0 * dt);
+            player.speed = Math.max(targetSpeed, player.speed - 2.5 * dt);
           }
         }
 
         // --------------------------------------------------------------------
-        // 360-DEGREE RESPONSIVE STEERING:
-        // When joystick is pointed in ANY direction, car turns smoothly towards
-        // that exact heading. When released, ZERO turning is added.
+        // INTUITIVE JOYSTICK & KEYBOARD STEERING:
+        // Left/Right stick tilt (joy.x) steers the car smoothly left or right.
+        // Full deflection = sharp turn/drift; small tilt = gentle correction.
+        // When released, ZERO artificial turn is applied — car glides straight!
         // --------------------------------------------------------------------
-        if (joy.active && joy.magnitude > 0.12) {
-          const targetHeading = Math.atan2(joy.y, joy.x);
-          let diff = targetHeading - player.angle;
-          while (diff < -Math.PI) diff += Math.PI * 2;
-          while (diff > Math.PI) diff -= Math.PI * 2;
-
-          // Proportional angular speed: nimble, reactive, and natural
-          const maxTurnRate = 5.0 * (0.6 + joy.magnitude * 0.4);
-          const turnStep = maxTurnRate * dt;
-
-          if (Math.abs(diff) <= turnStep) {
-            player.angle = targetHeading;
-          } else {
-            player.angle += Math.sign(diff) * turnStep;
-          }
+        if (joy.active && Math.abs(joy.x) > 0.06) {
+          const steerSensitivity = 4.4; // radians per second at full deflection
+          player.angle += joy.x * steerSensitivity * dt;
         } else if (keysRef.current.left || keysRef.current.right) {
           // Keyboard left/right steering
           const keyTurnRate = 4.2;

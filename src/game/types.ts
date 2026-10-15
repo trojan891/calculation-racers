@@ -14,6 +14,7 @@ export type TrojoGameId =
   | 'word_finder'
   | 'game_2048'
   | 'mahjong_solitaire'
+  | 'ludo'
   // Legacy IDs kept for backward compatibility with older saved records
   | 'cheat_your_friend'
   | 'solve_the_puzzle'
@@ -154,6 +155,22 @@ export const TROJO_GAMES: TrojoGameCatalogItem[] = [
     defaultQuestionCount: 10,
     defaultTimeLimitSec: 20,
   },
+  {
+    id: 'ludo',
+    name: 'Ludo Master',
+    tagline: 'Roll the dice, race your tokens home & conquer the board!',
+    shortDescription:
+      'Classic board game for solo vs AI bots or 2 to 6 players (solo, duo, trio, squad, five, six) with full-screen dynamic board and dice sound effects.',
+    emoji: '🎲',
+    accentColor: 'orange',
+    badgeText: 'Board Game · 2-6 Players',
+    supportsSolo: true,
+    supportsMultiplayer: true,
+    isInteractivePuzzle: true,
+    totalLevels: 1,
+    defaultQuestionCount: 10,
+    defaultTimeLimitSec: 20,
+  },
 ];
 
 export const TROJO_GAME_MAP: Record<TrojoGameId, TrojoGameCatalogItem> = {
@@ -163,6 +180,7 @@ export const TROJO_GAME_MAP: Record<TrojoGameId, TrojoGameCatalogItem> = {
   word_finder: TROJO_GAMES[3],
   game_2048: TROJO_GAMES[4],
   mahjong_solitaire: TROJO_GAMES[5],
+  ludo: TROJO_GAMES[6],
   // Fallback mappings for legacy records
   cheat_your_friend: TROJO_GAMES[2],
   solve_the_puzzle: TROJO_GAMES[4],
@@ -178,7 +196,8 @@ export function isInteractivePuzzleGame(gameId?: TrojoGameId): boolean {
     gameId === 'water_sort' ||
     gameId === 'word_finder' ||
     gameId === 'game_2048' ||
-    gameId === 'mahjong_solitaire'
+    gameId === 'mahjong_solitaire' ||
+    gameId === 'ludo'
   );
 }
 

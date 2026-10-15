@@ -561,6 +561,78 @@ export const GameTileArtwork: React.FC<GameTileArtworkProps> = ({
         </div>
       );
 
+    case 'ludo':
+      return (
+        <div
+          className={`relative overflow-hidden rounded-[28px] bg-[#0F172A] shadow-md select-none ${className}`}
+        >
+          <svg
+            viewBox="0 0 200 200"
+            className="h-full w-full"
+            aria-label="Ludo Master"
+          >
+            {/* Board Background */}
+            <rect x="18" y="18" width="164" height="164" rx="20" fill="#1E293B" />
+
+            {/* 4 Quadrants */}
+            {/* Green Top-Left */}
+            <rect x="28" y="28" width="60" height="60" rx="10" fill="#10B981" />
+            <circle cx="58" cy="58" r="16" fill="#FFFFFF" opacity="0.9" />
+            <circle cx="58" cy="58" r="8" fill="#047857" />
+
+            {/* Yellow Top-Right */}
+            <rect x="112" y="28" width="60" height="60" rx="10" fill="#F59E0B" />
+            <circle cx="142" cy="58" r="16" fill="#FFFFFF" opacity="0.9" />
+            <circle cx="142" cy="58" r="8" fill="#B45309" />
+
+            {/* Red Bottom-Left */}
+            <rect x="28" y="112" width="60" height="60" rx="10" fill="#EF4444" />
+            <circle cx="58" cy="142" r="16" fill="#FFFFFF" opacity="0.9" />
+            <circle cx="58" cy="142" r="8" fill="#B91C1C" />
+
+            {/* Blue Bottom-Right */}
+            <rect x="112" y="112" width="60" height="60" rx="10" fill="#3B82F6" />
+            <circle cx="142" cy="142" r="16" fill="#FFFFFF" opacity="0.9" />
+            <circle cx="142" cy="142" r="8" fill="#1D4ED8" />
+
+            {/* Center Home Star */}
+            <circle cx="100" cy="100" r="18" fill="#FACC15" />
+            <text
+              x="100"
+              y="106"
+              textAnchor="middle"
+              fill="#78350F"
+              fontSize="16"
+              fontWeight="900"
+            >
+              ★
+            </text>
+
+            {/* Rolling 3D Dice Overlay in Center */}
+            <g transform="translate(82, 82)">
+              <rect
+                x="0"
+                y="0"
+                width="36"
+                height="36"
+                rx="8"
+                fill="#FFFFFF"
+                stroke="#CBD5E1"
+                strokeWidth="2"
+                filter="drop-shadow(0 4px 6px rgba(0,0,0,0.3))"
+              />
+              {/* 6 dots */}
+              <circle cx="10" cy="9" r="3" fill="#0F172A" />
+              <circle cx="26" cy="9" r="3" fill="#0F172A" />
+              <circle cx="10" cy="18" r="3" fill="#0F172A" />
+              <circle cx="26" cy="18" r="3" fill="#0F172A" />
+              <circle cx="10" cy="27" r="3" fill="#0F172A" />
+              <circle cx="26" cy="27" r="3" fill="#0F172A" />
+            </g>
+          </svg>
+        </div>
+      );
+
     case 'calculation_racer':
     default:
       return (

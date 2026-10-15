@@ -135,6 +135,12 @@ export const GameSetupPage: React.FC<GameSetupPageProps> = ({
     });
   }, [selectedGameId, onSelectLevel]);
 
+  useEffect(() => {
+    if (selectedGameId === 'ludo' && stepMode === 'configure') {
+      onStartSolo('solo', 1);
+    }
+  }, [selectedGameId, stepMode, onStartSolo]);
+
   const activeGame = TROJO_GAME_MAP[selectedGameId] || TROJO_GAMES[0];
   const isPuzzle = isInteractivePuzzleGame(selectedGameId);
   const availableSubcategories = SUBCATEGORIES_BY_CATEGORY[selectedCategory] || [];
@@ -208,6 +214,10 @@ export const GameSetupPage: React.FC<GameSetupPageProps> = ({
               onClick={() => {
                 soundEngine.playClick();
                 onSelectGameId(game.id);
+                if (game.id === 'ludo') {
+                  onStartSolo('solo', 1);
+                  return;
+                }
                 setStepMode('configure');
               }}
               className="group flex flex-col items-center rounded-3xl border border-slate-200 bg-white p-4 text-center shadow-xs transition-all duration-200 hover:-translate-y-1.5 hover:border-blue-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
