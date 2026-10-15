@@ -728,6 +728,7 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
 
   // Level & Score State (Enforce unlocked levels in Solo mode)
   const [unlockedLevel, setUnlockedLevel] = useState<number>(() => {
+    if (gameId === 'circular_racer') return 8; // All 8 circuits unlocked from start
     try {
       const saved = localStorage.getItem(`trojo_unlocked_lvl_${gameId}`);
       if (saved) {
@@ -743,6 +744,9 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
   });
 
   const [currentLevel, setCurrentLevel] = useState<number>(() => {
+    if (gameId === 'circular_racer') {
+      return Math.max(1, Math.min(8, initialLevel || 1));
+    }
     if (isMultiplayer) {
       return difficulty === 'hard' ? 8 : difficulty === 'medium' ? 4 : 1;
     }
@@ -1159,12 +1163,9 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
       setMovesCount(data.lapsCompleted * 10);
       setMistakesCount(data.placement > 1 ? data.placement - 1 : 0);
 
-      const nextLevel = Math.min(20, currentLevel + 1);
+      const nextLevel = (currentLevel % 8) + 1;
       try {
-        const stored = Number(localStorage.getItem('trojo_unlocked_lvl_circular_racer') || '1');
-        if (nextLevel > stored) {
-          localStorage.setItem('trojo_unlocked_lvl_circular_racer', String(nextLevel));
-        }
+        localStorage.setItem('trojo_unlocked_lvl_circular_racer', '8');
       } catch {
         // ignore
       }
@@ -2040,6 +2041,7 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
           onFinish={handleCircularRacerFinish}
           onProgressUpdate={handleCircularProgressUpdate}
           onExitRequest={() => setExitConfirmOpen(true)}
+          onLevelChange={(lvl) => setCurrentLevel(lvl)}
         />
 
         {/* Exit Active Game Confirmation Modal */}
@@ -2083,7 +2085,7 @@ export const PuzzleGameArenaPage: React.FC<PuzzleGameArenaPageProps> = ({
   }
 
   return (
-    <div className="mx-auto flex h-[100dvh] w-full max-w-3xl flex-col justify-between overflow-hidden px-2.5 py-2 select-none sm:px-4 sm:py-3">
+    <div className="mx-auto flex h-[100dvh] w-full max-w-7xl flex-col justify-between overflow-hidden px-2 py-2 select-none sm:px-6 sm:py-3">
       {/* Compact Top HUD Bar: Exit, Game + Level, Progress Bar, Score, Finish Game */}
       <div className="mb-1.5 shrink-0 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-2xs sm:px-4">
         <div className="flex flex-wrap items-center justify-between gap-2">

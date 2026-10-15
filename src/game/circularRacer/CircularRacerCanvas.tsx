@@ -7,6 +7,8 @@ import {
   Minimize2,
   Trophy,
   X,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { CarColor, CAR_PALETTE, RoomPlayerRecord } from '../types';
 import { soundEngine } from '../../lib/sound';
@@ -30,42 +32,208 @@ interface CircularRacerCanvasProps {
   onFinish: (data: CircularRacerFinishData) => void;
   onProgressUpdate?: (progressPct: number, score: number) => void;
   onExitRequest?: () => void;
+  onLevelChange?: (level: number) => void;
 }
 
-// 20 Progressive Circuits with diverse shapes, lengths and themes
+// 8 Distinct Circuits with progressively complex curves, all unlocked
 export interface TrackDefinition {
   level: number;
   name: string;
-  theme: 'asphalt' | 'neon' | 'desert' | 'midnight' | 'cyber';
-  rx: number; // outer track radius X
-  ry: number; // outer track radius Y
+  subtitle: string;
+  theme: 'neon' | 'asphalt' | 'cyber' | 'desert' | 'midnight';
+  difficulty: 'Easy' | 'Medium' | 'Challenging' | 'Expert';
   trackWidth: number;
-  curvature: number; // chicane bend intensity
   laps: number;
+  // Parametric function returning (x, y) for t in [0, 1)
+  getPoint: (t: number) => { x: number; y: number };
 }
 
+// Helper to precompute an SVG path string from any parametric track function
+function buildSvgPathFromFunction(fn: (t: number) => { x: number; y: number }, samples = 36): string {
+  const pts: { x: number; y: number }[] = [];
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+
+  for (let i = 0; i < samples; i++) {
+    const p = fn(i / samples);
+    pts.push(p);
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+
+  const w = maxX - minX || 1;
+  const h = maxY - minY || 1;
+  const targetW = 38;
+  const targetH = 22;
+  const padX = 3;
+  const padY = 3;
+
+  return (
+    pts
+      .map((p, i) => {
+        const nx = padX + ((p.x - minX) / w) * targetW;
+        const ny = padY + ((p.y - minY) / h) * targetH;
+        return `${i === 0 ? 'M' : 'L'}${nx.toFixed(1)},${ny.toFixed(1)}`;
+      })
+      .join(' ') + ' Z'
+  );
+}
+
+// ============================================================================
+// 8 UNIQUE CIRUITS WITH PROGRESSIVE CURVE COMPLEXITY (ALL UNLOCKED)
+// ============================================================================
 export const CIRCULAR_TRACKS: TrackDefinition[] = [
-  { level: 1, name: 'Sunlight Oval', theme: 'asphalt', rx: 360, ry: 210, trackWidth: 78, curvature: 0, laps: 3 },
-  { level: 2, name: 'Twin Ring Speedway', theme: 'asphalt', rx: 375, ry: 210, trackWidth: 76, curvature: 14, laps: 3 },
-  { level: 3, name: 'Neon City Loop', theme: 'neon', rx: 385, ry: 215, trackWidth: 74, curvature: 20, laps: 3 },
-  { level: 4, name: 'Desert Dune Ring', theme: 'desert', rx: 390, ry: 215, trackWidth: 72, curvature: 24, laps: 3 },
-  { level: 5, name: 'Midnight Grand Prix', theme: 'midnight', rx: 400, ry: 220, trackWidth: 70, curvature: 28, laps: 3 },
-  { level: 6, name: 'Cyber Turbo Speedway', theme: 'cyber', rx: 405, ry: 220, trackWidth: 68, curvature: 32, laps: 3 },
-  { level: 7, name: 'Tokyo Drift Apex', theme: 'neon', rx: 410, ry: 225, trackWidth: 68, curvature: 36, laps: 3 },
-  { level: 8, name: 'Alpine Serpentine', theme: 'asphalt', rx: 415, ry: 225, trackWidth: 66, curvature: 42, laps: 3 },
-  { level: 9, name: 'Red Rock Canyon', theme: 'desert', rx: 420, ry: 230, trackWidth: 64, curvature: 45, laps: 3 },
-  { level: 10, name: 'Neon Horizon Loop', theme: 'cyber', rx: 425, ry: 230, trackWidth: 64, curvature: 48, laps: 3 },
-  { level: 11, name: 'Emerald Speedway', theme: 'asphalt', rx: 430, ry: 230, trackWidth: 62, curvature: 50, laps: 3 },
-  { level: 12, name: 'Sunset Ridge Loop', theme: 'desert', rx: 435, ry: 235, trackWidth: 62, curvature: 52, laps: 3 },
-  { level: 13, name: 'Midnight Velocity', theme: 'midnight', rx: 440, ry: 235, trackWidth: 60, curvature: 55, laps: 3 },
-  { level: 14, name: 'Cyber Pulse Ring', theme: 'cyber', rx: 445, ry: 240, trackWidth: 60, curvature: 58, laps: 3 },
-  { level: 15, name: 'Golden Sands Oval', theme: 'desert', rx: 450, ry: 240, trackWidth: 58, curvature: 60, laps: 3 },
-  { level: 16, name: 'Hyperdrive Apex', theme: 'neon', rx: 455, ry: 240, trackWidth: 58, curvature: 62, laps: 3 },
-  { level: 17, name: 'Thunder Valley Ring', theme: 'midnight', rx: 460, ry: 245, trackWidth: 56, curvature: 64, laps: 3 },
-  { level: 18, name: 'Neon Vortex Loop', theme: 'cyber', rx: 465, ry: 245, trackWidth: 56, curvature: 66, laps: 3 },
-  { level: 19, name: 'Apex Predator Circuit', theme: 'asphalt', rx: 470, ry: 250, trackWidth: 54, curvature: 68, laps: 3 },
-  { level: 20, name: 'Championship Grand Ring', theme: 'neon', rx: 480, ry: 250, trackWidth: 54, curvature: 70, laps: 3 },
+  // 1. Neon Oval (Smooth, pure high-speed 2-turn speedway)
+  {
+    level: 1,
+    name: 'Neon Oval',
+    subtitle: 'High-Speed Speedway',
+    theme: 'neon',
+    difficulty: 'Easy',
+    trackWidth: 76,
+    laps: 3,
+    getPoint: (t: number) => {
+      const th = t * Math.PI * 2 - Math.PI / 2;
+      return {
+        x: 420 * Math.cos(th),
+        y: 220 * Math.sin(th),
+      };
+    },
+  },
+  // 2. Delta Tri-Oval (3 distinct corners with sweeping straights and hairpin)
+  {
+    level: 2,
+    name: 'Delta Tri-Oval',
+    subtitle: 'Tri-Corner Speedway',
+    theme: 'asphalt',
+    difficulty: 'Easy',
+    trackWidth: 74,
+    laps: 3,
+    getPoint: (t: number) => {
+      const th = t * Math.PI * 2 - Math.PI / 2;
+      const r = 320 + 65 * Math.cos(3 * th + Math.PI / 2);
+      return {
+        x: r * Math.cos(th) * 1.25,
+        y: r * Math.sin(th),
+      };
+    },
+  },
+  // 3. Twin Loop / Hourglass (Dual-lobe circuit with central waist chicane)
+  {
+    level: 3,
+    name: 'Twin Loop',
+    subtitle: 'Hourglass Chicanes',
+    theme: 'cyber',
+    difficulty: 'Medium',
+    trackWidth: 72,
+    laps: 3,
+    getPoint: (t: number) => {
+      const th = t * Math.PI * 2 - Math.PI / 2;
+      return {
+        x: 430 * Math.cos(th),
+        y: 220 * (Math.sin(th) - 0.25 * Math.sin(3 * th)),
+      };
+    },
+  },
+  // 4. Canyon Kidney (Asymmetric GP circuit: long outer sweeper + inward chicane)
+  {
+    level: 4,
+    name: 'Canyon Kidney',
+    subtitle: 'Red Rock Curva Grande',
+    theme: 'desert',
+    difficulty: 'Medium',
+    trackWidth: 70,
+    laps: 3,
+    getPoint: (t: number) => {
+      const th = t * Math.PI * 2 - Math.PI / 2;
+      return {
+        x: 420 * Math.cos(th) + 40 * Math.cos(2 * th + Math.PI / 2),
+        y: 220 * Math.sin(th) + 60 * Math.sin(2 * th),
+      };
+    },
+  },
+  // 5. Desert Clover (4 rhythmic corners with varying entry radii)
+  {
+    level: 5,
+    name: 'Desert Clover',
+    subtitle: 'Quad Apex Rhythm',
+    theme: 'midnight',
+    difficulty: 'Challenging',
+    trackWidth: 68,
+    laps: 3,
+    getPoint: (t: number) => {
+      const th = t * Math.PI * 2 - Math.PI / 2;
+      const r = 310 + 65 * Math.cos(4 * th);
+      return {
+        x: r * Math.cos(th) * 1.4,
+        y: r * Math.sin(th) * 0.95,
+      };
+    },
+  },
+  // 6. Serpentine S-Twist (Flowing high-speed S-curves and alternating chicanes)
+  {
+    level: 6,
+    name: 'Serpentine Esses',
+    subtitle: 'Technical S-Curves',
+    theme: 'asphalt',
+    difficulty: 'Challenging',
+    trackWidth: 66,
+    laps: 3,
+    getPoint: (t: number) => {
+      const th = t * Math.PI * 2 - Math.PI / 2;
+      return {
+        x: 400 * Math.cos(th) + 65 * Math.sin(3 * th),
+        y: 230 * Math.sin(th) + 45 * Math.sin(2 * th),
+      };
+    },
+  },
+  // 7. Thunderbolt Circuit (Tight hairpin, technical chicane complex, long DRS straights)
+  {
+    level: 7,
+    name: 'Thunderbolt GP',
+    subtitle: 'Apex Hairpin Circuit',
+    theme: 'neon',
+    difficulty: 'Expert',
+    trackWidth: 64,
+    laps: 3,
+    getPoint: (t: number) => {
+      const th = t * Math.PI * 2 - Math.PI / 2;
+      const r = 300 + 65 * Math.cos(3 * th + Math.PI / 2) + 30 * Math.cos(5 * th - Math.PI / 2);
+      return {
+        x: r * Math.cos(th) * 1.5,
+        y: r * Math.sin(th) * 0.95,
+      };
+    },
+  },
+  // 8. The Apex Omega (Master-tier circuit with iconic Omega loop & technical switchbacks)
+  {
+    level: 8,
+    name: 'The Apex Omega',
+    subtitle: 'Championship Grand Prix',
+    theme: 'cyber',
+    difficulty: 'Expert',
+    trackWidth: 62,
+    laps: 3,
+    getPoint: (t: number) => {
+      const th = t * Math.PI * 2 - Math.PI / 2;
+      return {
+        x: 410 * Math.cos(th) + 65 * Math.sin(3 * th) - 25 * Math.cos(5 * th),
+        y: 235 * Math.sin(th) + 45 * Math.cos(2 * th) - 30 * Math.sin(4 * th),
+      };
+    },
+  },
 ];
+
+// Precompute SVG thumbnail paths for each of the 8 tracks
+const TRACK_SVG_PATHS = CIRCULAR_TRACKS.map((tr) => ({
+  level: tr.level,
+  name: tr.name,
+  svgPath: buildSvgPathFromFunction(tr.getPoint),
+}));
 
 interface RacerState {
   id: string;
@@ -74,6 +242,8 @@ interface RacerState {
   colorHex: string;
   x: number;
   y: number;
+  vx: number;
+  vy: number;
   angle: number; // radians
   speed: number;
   targetSpeed: number;
@@ -127,10 +297,14 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
   onFinish,
   onProgressUpdate,
   onExitRequest,
+  onLevelChange,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const track = CIRCULAR_TRACKS[(level - 1) % CIRCULAR_TRACKS.length] || CIRCULAR_TRACKS[0];
+
+  // Active track index (1..8)
+  const activeLevel = Math.max(1, Math.min(8, level || 1));
+  const track = CIRCULAR_TRACKS[activeLevel - 1] || CIRCULAR_TRACKS[0];
 
   // Callback refs to decouple from requestAnimationFrame loop & prevent unneeded resets
   const onFinishRef = useRef(onFinish);
@@ -145,6 +319,7 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
   const [joystickActive, setJoystickActive] = useState(false);
   const [joystickPos, setJoystickPos] = useState({ x: 0, y: 0 });
   const joystickVectorRef = useRef({ x: 0, y: 0, magnitude: 0, active: false });
+  const isPointerDownRef = useRef(false);
 
   // Brake Button State (Bottom-Right Corner)
   const [isBraking, setIsBraking] = useState(false);
@@ -162,7 +337,7 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
   const [countdownText, setCountdownText] = useState<string | null>('3');
   const [raceFinished, setRaceFinished] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [showRotatePrompt, setShowRotatePrompt] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   // Sync brake ref
   useEffect(() => {
@@ -182,38 +357,12 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
     };
   }, []);
 
-  // Screen orientation management & check
-  useEffect(() => {
-    const checkOrientation = () => {
-      if (typeof window === 'undefined') return;
-      const isPortrait = window.innerHeight > window.innerWidth && window.innerWidth < 768;
-      setShowRotatePrompt(isPortrait);
-    };
-
-    checkOrientation();
-    window.addEventListener('resize', checkOrientation);
-    window.addEventListener('orientationchange', checkOrientation);
-
-    return () => {
-      window.removeEventListener('resize', checkOrientation);
-      window.removeEventListener('orientationchange', checkOrientation);
-    };
-  }, []);
-
   const toggleFullscreen = async () => {
     try {
       if (!document.fullscreenElement) {
         if (containerRef.current?.requestFullscreen) {
           await containerRef.current.requestFullscreen();
           setIsFullscreen(true);
-          try {
-            const orientation = (screen as any).orientation;
-            if (orientation && typeof orientation.lock === 'function') {
-              await orientation.lock('landscape');
-            }
-          } catch {
-            // ignore orientation lock error if unsupported
-          }
         }
       } else {
         if (document.exitFullscreen) {
@@ -226,34 +375,21 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
     }
   };
 
-  // Track parametric math helper (elliptical curve with chicanes)
-  const getTrackPoint = useCallback(
-    (t: number, cx = 0, cy = 0) => {
-      const normT = ((t % 1) + 1) % 1;
-      const angle = normT * Math.PI * 2 - Math.PI / 2;
-      const rMod = 1 + (Math.sin(angle * 2) * track.curvature) / 360;
-      const x = cx + Math.cos(angle) * track.rx * rMod;
-      const y = cy + Math.sin(angle) * track.ry * rMod;
-      return { x, y, angle };
-    },
-    [track]
-  );
-
   // Precomputed dense centerline sample points for accurate collision & navigation
-  const SAMPLE_COUNT = 180;
+  const SAMPLE_COUNT = 360;
   const trackSamples = useMemo<TrackSamplePoint[]>(() => {
     const samples: TrackSamplePoint[] = [];
     for (let i = 0; i < SAMPLE_COUNT; i++) {
       const t = i / SAMPLE_COUNT;
-      const pt = getTrackPoint(t, 0, 0);
-      const ptNext = getTrackPoint((t + 0.005) % 1, 0, 0);
+      const pt = track.getPoint(t);
+      const ptNext = track.getPoint((t + 0.002) % 1);
       const heading = Math.atan2(ptNext.y - pt.y, ptNext.x - pt.x);
       const nx = -Math.sin(heading);
       const ny = Math.cos(heading);
       samples.push({ x: pt.x, y: pt.y, heading, nx, ny, t });
     }
     return samples;
-  }, [getTrackPoint]);
+  }, [track]);
 
   // Track outer bounding dimension for viewport scaling
   const trackBounds = useMemo(() => {
@@ -261,7 +397,7 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
     let maxX = -Infinity;
     let minY = Infinity;
     let maxY = -Infinity;
-    const margin = track.trackWidth / 2 + 32;
+    const margin = track.trackWidth / 2 + 36;
 
     trackSamples.forEach((pt) => {
       if (pt.x < minX) minX = pt.x;
@@ -270,56 +406,64 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
       if (pt.y > maxY) maxY = pt.y;
     });
 
-    const totalWidth = (maxX - minX) + margin * 2;
-    const totalHeight = (maxY - minY) + margin * 2;
+    const totalWidth = maxX - minX + margin * 2;
+    const totalHeight = maxY - minY + margin * 2;
     return {
       totalWidth,
       totalHeight,
       centerX: (minX + maxX) / 2,
       centerY: (minY + maxY) / 2,
     };
-  }, [track, trackSamples]);
+  }, [trackSamples, track.trackWidth]);
 
-  // Virtual Joystick Pointer Handlers (Fail-Safe Pointer Capture + Global Reset)
-  const JOYSTICK_RADIUS = 50;
+  // ==========================================================================
+  // INTUITIVE 360-DEGREE VIRTUAL JOYSTICK (POINTER CAPTURE & GLOBAL LISTENERS)
+  // ==========================================================================
+  const JOYSTICK_RADIUS = 46;
+
+  const updateJoystickFromPointer = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!joystickBaseRef.current) return;
+      const rect = joystickBaseRef.current.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+
+      const dx = clientX - centerX;
+      const dy = clientY - centerY;
+      const distance = Math.hypot(dx, dy);
+      const clampedDist = Math.min(distance, JOYSTICK_RADIUS);
+      const angle = Math.atan2(dy, dx);
+
+      const clampedX = Math.cos(angle) * clampedDist;
+      const clampedY = Math.sin(angle) * clampedDist;
+
+      setJoystickPos({ x: clampedX, y: clampedY });
+
+      // Small deadzone (5px) prevents accidental micro-drift
+      const isMoved = clampedDist > 5;
+      const mag = isMoved ? clampedDist / JOYSTICK_RADIUS : 0;
+
+      joystickVectorRef.current = {
+        x: isMoved ? clampedX / JOYSTICK_RADIUS : 0,
+        y: isMoved ? clampedY / JOYSTICK_RADIUS : 0,
+        magnitude: mag,
+        active: isMoved,
+      };
+    },
+    [JOYSTICK_RADIUS]
+  );
 
   const resetJoystick = useCallback(() => {
+    isPointerDownRef.current = false;
     setJoystickActive(false);
     setJoystickPos({ x: 0, y: 0 });
     joystickVectorRef.current = { x: 0, y: 0, magnitude: 0, active: false };
   }, []);
 
-  const updateJoystickFromPointer = useCallback((clientX: number, clientY: number) => {
-    const baseEl = joystickBaseRef.current;
-    if (!baseEl) return;
-    const rect = baseEl.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-
-    const dx = clientX - centerX;
-    const dy = clientY - centerY;
-    const distance = Math.hypot(dx, dy);
-    const clampedDist = Math.min(distance, JOYSTICK_RADIUS);
-    const angle = Math.atan2(dy, dx);
-
-    const clampedX = Math.cos(angle) * clampedDist;
-    const clampedY = Math.sin(angle) * clampedDist;
-
-    setJoystickPos({ x: clampedX, y: clampedY });
-
-    // Deadzone of 6px prevents accidental drift
-    const mag = clampedDist > 6 ? clampedDist / JOYSTICK_RADIUS : 0;
-    joystickVectorRef.current = {
-      x: clampedDist > 6 ? clampedX / JOYSTICK_RADIUS : 0,
-      y: clampedDist > 6 ? clampedY / JOYSTICK_RADIUS : 0,
-      magnitude: mag,
-      active: clampedDist > 6,
-    };
-  }, []);
-
   const handleJoystickPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
+    isPointerDownRef.current = true;
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -330,7 +474,7 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
   };
 
   const handleJoystickPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!joystickActive && !joystickVectorRef.current.active) return;
+    if (!isPointerDownRef.current && !joystickActive) return;
     e.preventDefault();
     e.stopPropagation();
     updateJoystickFromPointer(e.clientX, e.clientY);
@@ -347,39 +491,36 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
     resetJoystick();
   };
 
-  // Global window fail-safe: any pointer release or window blur resets joystick and brake
+  // Global window listeners so dragging outside joystick base never drops input
   useEffect(() => {
+    const handleGlobalPointerMove = (e: PointerEvent) => {
+      if (isPointerDownRef.current) {
+        updateJoystickFromPointer(e.clientX, e.clientY);
+      }
+    };
     const handleGlobalPointerUp = () => {
-      if (joystickVectorRef.current.active) {
+      if (isPointerDownRef.current) {
         resetJoystick();
       }
-      if (isBrakingRef.current) {
-        setIsBraking(false);
-      }
     };
 
-    const handleWindowBlur = () => {
-      resetJoystick();
-      setIsBraking(false);
-      keysRef.current = { up: false, down: false, left: false, right: false };
-    };
-
+    window.addEventListener('pointermove', handleGlobalPointerMove);
     window.addEventListener('pointerup', handleGlobalPointerUp);
     window.addEventListener('pointercancel', handleGlobalPointerUp);
-    window.addEventListener('blur', handleWindowBlur);
 
     return () => {
+      window.removeEventListener('pointermove', handleGlobalPointerMove);
       window.removeEventListener('pointerup', handleGlobalPointerUp);
       window.removeEventListener('pointercancel', handleGlobalPointerUp);
-      window.removeEventListener('blur', handleWindowBlur);
     };
-  }, [resetJoystick]);
+  }, [updateJoystickFromPointer, resetJoystick]);
 
-  // ==========================================================================
-  // MAIN RACING ENGINE (Persistent Ref State + Responsive Viewport Scaling)
-  // ==========================================================================
+  // Racer State Ref
   const racersRef = useRef<RacerState[]>([]);
 
+  // ==========================================================================
+  // MAIN PHYSICS LOOP & CANVAS RENDERING
+  // ==========================================================================
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -388,92 +529,66 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
 
     let animId: number;
     let lastTime = performance.now();
-    let raceStartTime = 0;
-    let lastHudSyncTime = 0;
-    let lastProgressReportTime = 0;
+    let raceStartTime = performance.now();
 
-    const worldCx = 0;
-    const worldCy = 0;
-
-    const CHECKPOINT_COUNT = 12;
     const TOTAL_LAPS = track.laps;
+    const CHECKPOINT_COUNT = 48;
     const playerPalette = CAR_PALETTE[playerColor] || CAR_PALETTE.blue;
 
-    // Resize canvas buffer crisp & sharp without flickering
+    // Reset UI counters for the track
+    setCurrentLap(1);
+    setPlayerPosition(1);
+    setCurrentSpeedKmh(0);
+    setLapElapsedMs(0);
+    setRaceFinished(false);
+    setCountdownText('3');
+
+    // Resize Canvas to device pixel ratio
     const updateCanvasResolution = () => {
-      const container = containerRef.current;
-      if (container && canvas) {
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        const w = container.clientWidth || 960;
-        const h = container.clientHeight || 540;
-        const targetW = Math.round(w * dpr);
-        const targetH = Math.round(h * dpr);
-        if (canvas.width !== targetW || canvas.height !== targetH) {
-          canvas.width = targetW;
-          canvas.height = targetH;
-        }
+      if (!canvas) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = canvas.clientWidth || window.innerWidth;
+      const h = canvas.clientHeight || window.innerHeight;
+      if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
+        canvas.width = Math.floor(w * dpr);
+        canvas.height = Math.floor(h * dpr);
       }
     };
+
     updateCanvasResolution();
     window.addEventListener('resize', updateCanvasResolution);
 
-    // ------------------------------------------------------------------------
-    // STARTING GRID CALCULATION (Grand Prix Side-by-Side Grid)
-    // ------------------------------------------------------------------------
-    const tBase = 0.988;
-    const ptA = getTrackPoint(tBase, worldCx, worldCy);
-    const ptB = getTrackPoint((tBase + 0.005) % 1, worldCx, worldCy);
-    const headingAngle = Math.atan2(ptB.y - ptA.y, ptB.x - ptA.x);
-    const unitTanX = Math.cos(headingAngle);
-    const unitTanY = Math.sin(headingAngle);
-    const unitNormX = -unitTanY;
-    const unitNormY = unitTanX;
+    // Starting slot coordinates at t = 0
+    const startPt = trackSamples[0];
+    const unitTanX = Math.cos(startPt.heading);
+    const unitTanY = Math.sin(startPt.heading);
+    const unitNormX = -Math.sin(startPt.heading);
+    const unitNormY = Math.cos(startPt.heading);
 
-    const getSlotCoords = (slotIndex: number, totalRacers: number) => {
+    const getSlotCoords = (slotIndex: number, totalSlots: number) => {
       let lat = 0;
       let long = 0;
-
-      if (totalRacers <= 2) {
-        lat = slotIndex === 0 ? -15 : 15;
-        long = 0;
-      } else if (totalRacers === 3) {
+      if (totalSlots === 2) {
         if (slotIndex === 0) {
-          lat = -15;
-          long = 0;
-        } else if (slotIndex === 1) {
-          lat = 15;
+          lat = -14;
           long = 0;
         } else {
-          lat = 0;
-          long = -28;
-        }
-      } else if (totalRacers === 4) {
-        if (slotIndex === 0) {
-          lat = -15;
-          long = 0;
-        } else if (slotIndex === 1) {
-          lat = 15;
-          long = 0;
-        } else if (slotIndex === 2) {
-          lat = -15;
-          long = -28;
-        } else {
-          lat = 15;
-          long = -28;
+          lat = 14;
+          long = -26;
         }
       } else {
-        // 5 racers: 1 Human + 4 AI Bots
+        // 5 slots: 1 Human + 4 AI Bots
         if (slotIndex === 0) {
-          lat = -15;
+          lat = -14;
           long = 0;
         } else if (slotIndex === 1) {
-          lat = 15;
+          lat = 14;
           long = 0;
         } else if (slotIndex === 2) {
-          lat = -15;
+          lat = -14;
           long = -28;
         } else if (slotIndex === 3) {
-          lat = 15;
+          lat = 14;
           long = -28;
         } else {
           lat = 0;
@@ -482,9 +597,9 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
       }
 
       return {
-        x: ptA.x + unitNormX * lat + unitTanX * long,
-        y: ptA.y + unitNormY * lat + unitTanY * long,
-        angle: headingAngle,
+        x: startPt.x + unitNormX * lat + unitTanX * long,
+        y: startPt.y + unitNormY * lat + unitTanY * long,
+        angle: startPt.heading,
         laneOffset: lat,
       };
     };
@@ -510,6 +625,8 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
           colorHex: playerPalette.primary,
           x: slot0.x,
           y: slot0.y,
+          vx: 0,
+          vy: 0,
           angle: slot0.angle,
           speed: 0,
           targetSpeed: 0,
@@ -530,9 +647,11 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
           colorHex: '#EF4444',
           x: slot1.x,
           y: slot1.y,
+          vx: 0,
+          vy: 0,
           angle: slot1.angle,
           speed: 0,
-          targetSpeed: 5.1 + Math.random() * 0.4,
+          targetSpeed: 5.4 + Math.random() * 0.3,
           laneOffset: slot1.laneOffset,
           lap: 1,
           checkpoint: 0,
@@ -550,9 +669,11 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
           colorHex: '#10B981',
           x: slot2.x,
           y: slot2.y,
+          vx: 0,
+          vy: 0,
           angle: slot2.angle,
           speed: 0,
-          targetSpeed: 4.9 + Math.random() * 0.4,
+          targetSpeed: 5.1 + Math.random() * 0.35,
           laneOffset: slot2.laneOffset,
           lap: 1,
           checkpoint: 0,
@@ -566,13 +687,15 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
         {
           id: 'bot-3',
           isPlayer: false,
-          nickname: 'Volt Sam',
-          colorHex: '#A855F7',
+          nickname: 'Velocity Kai',
+          colorHex: '#F59E0B',
           x: slot3.x,
           y: slot3.y,
+          vx: 0,
+          vy: 0,
           angle: slot3.angle,
           speed: 0,
-          targetSpeed: 4.7 + Math.random() * 0.4,
+          targetSpeed: 4.8 + Math.random() * 0.3,
           laneOffset: slot3.laneOffset,
           lap: 1,
           checkpoint: 0,
@@ -586,13 +709,15 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
         {
           id: 'bot-4',
           isPlayer: false,
-          nickname: 'Blaze Drift',
-          colorHex: '#F59E0B',
+          nickname: 'Phantom Zane',
+          colorHex: '#8B5CF6',
           x: slot4.x,
           y: slot4.y,
+          vx: 0,
+          vy: 0,
           angle: slot4.angle,
           speed: 0,
-          targetSpeed: 4.5 + Math.random() * 0.4,
+          targetSpeed: 4.6 + Math.random() * 0.3,
           laneOffset: slot4.laneOffset,
           lap: 1,
           checkpoint: 0,
@@ -605,50 +730,44 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
         },
       ];
     } else {
-      // MULTIPLAYER MODE: SHOW ONLY ACTUAL JOINED PLAYERS (2 players = 2 cars, 3 = 3 cars, etc.)
-      // NEVER spawn AI bots.
-      const currentList = roomPlayersRef.current;
-      const joinedList =
-        currentList && currentList.length > 0
-          ? [...currentList].filter((p) => p && p.playerId)
+      // MULTIPLAYER MODE: EXACTLY ONE CAR PER JOINED PLAYER
+      const joinedList = (roomPlayersRef.current || []).filter((p) => p && p.playerId);
+      const effectiveList: RoomPlayerRecord[] =
+        joinedList.length > 0
+          ? joinedList
           : [
               {
-                playerId: playerId || 'player',
-                nickname: playerNickname,
-                carColor: playerColor,
-                distance: 0,
-                connected: true,
-                score: 0,
-                finished: false,
-                finishTimeMs: 0,
-                placement: 1,
                 roomCode: roomCode || 'ROOM',
+                playerId: playerId || 'player',
+                nickname: playerNickname || 'You',
+                carColor: playerColor || 'blue',
                 ready: true,
+                distance: 0,
+                score: 0,
                 correctAnswers: 0,
                 wrongAnswers: 0,
                 currentQuestionIndex: 0,
+                finished: false,
+                finishTimeMs: 0,
+                placement: 1,
+                connected: true,
                 lastSeenAtMs: Date.now(),
               },
             ];
 
-      joinedList.sort((a, b) => a.playerId.localeCompare(b.playerId));
-      const totalParticipants = Math.max(1, joinedList.length);
-
-      initialRacers = joinedList.map((p, idx) => {
-        const slot = getSlotCoords(idx, totalParticipants);
-        const isCurrent = p.playerId === playerId;
-        const color =
-          isCurrent
-            ? playerPalette.primary
-            : CAR_PALETTE[p.carColor]?.primary || '#3B82F6';
-
+      initialRacers = effectiveList.map((p, idx) => {
+        const slot = getSlotCoords(idx, effectiveList.length);
+        const isCurrent = p.playerId === playerId || (idx === 0 && !playerId);
+        const colInfo = CAR_PALETTE[p.carColor] || CAR_PALETTE.blue;
         return {
           id: p.playerId,
           isPlayer: isCurrent,
-          nickname: isCurrent ? playerNickname : p.nickname || 'Racer',
-          colorHex: color,
+          nickname: p.nickname || (isCurrent ? 'You' : `Player ${idx + 1}`),
+          colorHex: colInfo.primary,
           x: slot.x,
           y: slot.y,
+          vx: 0,
+          vy: 0,
           angle: slot.angle,
           speed: 0,
           targetSpeed: 0,
@@ -671,7 +790,7 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
     const skidmarks: SkidSegment[] = [];
 
     // Pre-race countdown tracking
-    let countdownRemainingMs = 3200; // 3 seconds count: 3 -> 2 -> 1 -> GO!
+    let countdownRemainingMs = 3200; // 3 -> 2 -> 1 -> GO!
     let raceStarted = false;
     let lastPlayedCountdownNumber = 4;
 
@@ -703,7 +822,7 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
       const player = racers.find((r) => r.isPlayer) || racers[0];
 
       // ----------------------------------------------------------------------
-      // 0. PRE-RACE COUNTDOWN LOGIC (Cars remain 100% stationary)
+      // 0. PRE-RACE COUNTDOWN LOGIC (Cars remain stationary)
       // ----------------------------------------------------------------------
       if (!raceStarted) {
         countdownRemainingMs -= dt * 1000;
@@ -743,74 +862,81 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
       }
 
       // ----------------------------------------------------------------------
-      // 1. HUMAN PLAYER PHYSICS & 360° STEERING
-      // Cars MUST NOT turn automatically. Steering follows ONLY actual player input.
+      // 1. INTUITIVE 360-DEGREE STEERING & VEHICLE PHYSICS
+      // Joystick vector directly controls target heading.
       // Releasing controls leaves the car travelling straight in its current heading.
       // ----------------------------------------------------------------------
       if (player && raceStarted && !player.finished) {
         const joy = joystickVectorRef.current;
         const braking =
-          isBrakingRef.current || keysRef.current.down || (joy.active && joy.y > 0.45);
+          isBrakingRef.current || keysRef.current.down;
         player.isBraking = braking;
 
-        // Acceleration and braking speeds
-        const NORMAL_MAX_SPEED = 5.8;
-        const BOOST_MAX_SPEED = 6.4;
-        const ACCEL_RATE = 4.8 * dt;
-        const BRAKE_DECEL = 9.8 * dt;
+        // Realistic acceleration and braking speeds
+        const CRUISE_SPEED = 6.0;
+        const BOOST_SPEED = 7.2;
+        const ACCEL_RATE = 5.2 * dt;
+        const BRAKE_DECEL = 10.5 * dt;
         const MIN_BRAKE_SPEED = 0.5;
 
+        // Handle Acceleration & Braking
         if (braking) {
           if (player.speed > MIN_BRAKE_SPEED) {
             player.speed = Math.max(MIN_BRAKE_SPEED, player.speed - BRAKE_DECEL);
           }
         } else {
-          const targetSpeed =
-            keysRef.current.up || (joy.active && joy.y < -0.3)
-              ? BOOST_MAX_SPEED
-              : NORMAL_MAX_SPEED;
+          const isBoosting = keysRef.current.up || (joy.active && joy.y < -0.7);
+          const targetSpeed = isBoosting ? BOOST_SPEED : CRUISE_SPEED;
 
           if (player.speed < targetSpeed) {
             player.speed = Math.min(targetSpeed, player.speed + ACCEL_RATE);
           } else if (player.speed > targetSpeed) {
-            player.speed = Math.max(targetSpeed, player.speed - 1.5 * dt);
+            player.speed = Math.max(targetSpeed, player.speed - 2.0 * dt);
           }
         }
 
         // --------------------------------------------------------------------
-        // GENUINE RESPONSIVE STEERING:
-        // Left steers left, Right steers right.
-        // Joy horizontal axis + diagonal transitions are smoothly handled.
-        // No input = 0 rotation added!
+        // 360-DEGREE RESPONSIVE STEERING:
+        // When joystick is pointed in ANY direction, car turns smoothly towards
+        // that exact heading. When released, ZERO turning is added.
         // --------------------------------------------------------------------
-        let steerAmount = 0;
+        if (joy.active && joy.magnitude > 0.12) {
+          const targetHeading = Math.atan2(joy.y, joy.x);
+          let diff = targetHeading - player.angle;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          while (diff > Math.PI) diff -= Math.PI * 2;
 
-        if (joy.active && joy.magnitude > 0.08) {
-          // Continuous 360° virtual joystick:
-          // X-axis provides primary proportional steering left/right
-          // Diagonal deflections scale steering smoothly
-          steerAmount = joy.x * (1 + Math.abs(joy.y) * 0.2);
+          // Proportional angular speed: nimble, reactive, and natural
+          const maxTurnRate = 5.0 * (0.6 + joy.magnitude * 0.4);
+          const turnStep = maxTurnRate * dt;
+
+          if (Math.abs(diff) <= turnStep) {
+            player.angle = targetHeading;
+          } else {
+            player.angle += Math.sign(diff) * turnStep;
+          }
         } else if (keysRef.current.left || keysRef.current.right) {
-          if (keysRef.current.left) steerAmount -= 1.0;
-          if (keysRef.current.right) steerAmount += 1.0;
-        }
-
-        // Apply turning strictly when player applies steering input
-        if (Math.abs(steerAmount) > 0.02) {
-          const MAX_STEER_RATE = 3.6; // radians per second
-          player.angle += steerAmount * MAX_STEER_RATE * dt;
+          // Keyboard left/right steering
+          const keyTurnRate = 4.2;
+          if (keysRef.current.left) player.angle -= keyTurnRate * dt;
+          if (keysRef.current.right) player.angle += keyTurnRate * dt;
         }
 
         // --------------------------------------------------------------------
-        // MOVE PLAYER FORWARD ALONG EXACT CURRENT HEADING
-        // (No automatic orbiting, waypoint following, or distance-based turning!)
+        // VEHICLE DYNAMICS: HIGH-GRIP ARCADE PHYSICS WITH SLIGHT DRIFT
         // --------------------------------------------------------------------
-        player.x += Math.cos(player.angle) * player.speed;
-        player.y += Math.sin(player.angle) * player.speed;
+        const desiredVx = Math.cos(player.angle) * player.speed;
+        const desiredVy = Math.sin(player.angle) * player.speed;
+
+        // Grip interpolation (82% instantaneous response, 18% lateral slip)
+        player.vx = (player.vx ?? desiredVx) * 0.18 + desiredVx * 0.82;
+        player.vy = (player.vy ?? desiredVy) * 0.18 + desiredVy * 0.82;
+
+        player.x += player.vx;
+        player.y += player.vy;
 
         // --------------------------------------------------------------------
         // ACCURATE GEOMETRIC TRACK BOUNDARY & BARRIER DETECTION
-        // Uses dense sample points to find exact closest centerline point
         // --------------------------------------------------------------------
         let minDistSq = Infinity;
         let closestIdx = 0;
@@ -827,25 +953,24 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
         const distFromCenter = Math.sqrt(minDistSq);
         const halfTrack = track.trackWidth / 2;
 
-        // Off-track grass runoff slows the car slightly and creates dust particles
+        // Off-track grass/sand runoff slows the car slightly
         if (distFromCenter > halfTrack) {
-          player.speed = Math.min(player.speed, 3.2);
+          player.speed = Math.min(player.speed, 3.4);
           if (Math.random() < 0.35) {
             particles.push({
               x: player.x,
               y: player.y,
               vx: (Math.random() - 0.5) * 1.8,
               vy: (Math.random() - 0.5) * 1.8,
-              alpha: 0.55,
+              alpha: 0.5,
               size: 3 + Math.random() * 3,
               color: track.theme === 'desert' ? '#F59E0B' : '#10B981',
             });
           }
         }
 
-        // Outer / Inner barrier collision: gently push car back inward
-        // Car slides along barrier without spinning or reversing uncontrollably
-        const maxBarrierDist = halfTrack + 16;
+        // Barrier collision: smoothly slide along the barrier wall without spinning
+        const maxBarrierDist = halfTrack + 12;
         if (distFromCenter > maxBarrierDist && distFromCenter > 0.01) {
           const vx = player.x - closestPt.x;
           const vy = player.y - closestPt.y;
@@ -853,11 +978,10 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
           player.x = closestPt.x + (vx / len) * maxBarrierDist;
           player.y = closestPt.y + (vy / len) * maxBarrierDist;
 
-          // Dampen speed on impact & trigger bump sound
-          if (player.speed > 2.5) {
+          if (player.speed > 2.8) {
             soundEngine.playBarrierBump();
           }
-          player.speed = Math.max(0.6, player.speed * 0.75);
+          player.speed = Math.max(1.0, player.speed * 0.82);
 
           // Sparks on barrier brush
           for (let sp = 0; sp < 2; sp++) {
@@ -874,8 +998,8 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
         }
 
         // Tire Skid Marks when cornering hard or braking
-        const isTurningHard = Math.abs(steerAmount) > 0.45;
-        if ((isTurningHard && player.speed > 3.6) || (braking && player.speed > 2.8)) {
+        const isTurningHard = joy.active && joy.magnitude > 0.4;
+        if ((isTurningHard && player.speed > 3.8) || (braking && player.speed > 2.8)) {
           const rearX = player.x - Math.cos(player.angle) * 14;
           const rearY = player.y - Math.sin(player.angle) * 14;
           skidmarks.push({
@@ -885,15 +1009,19 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
             y2: rearY - Math.sin(player.angle) * 4,
             alpha: braking ? 0.6 : 0.35,
           });
-          if (skidmarks.length > 180) skidmarks.shift();
+          if (skidmarks.length > 200) skidmarks.shift();
         }
 
         // Checkpoints & Laps Detection
         const nextCheck = (player.checkpoint + 1) % CHECKPOINT_COUNT;
-        const checkPointTarget = getTrackPoint(nextCheck / CHECKPOINT_COUNT, worldCx, worldCy);
-        const distToCheck = Math.hypot(player.x - checkPointTarget.x, player.y - checkPointTarget.y);
+        const checkPointT = nextCheck / CHECKPOINT_COUNT;
+        const checkPointTarget = track.getPoint(checkPointT);
+        const distToCheck = Math.hypot(
+          player.x - checkPointTarget.x,
+          player.y - checkPointTarget.y
+        );
 
-        if (distToCheck < track.trackWidth * 1.1) {
+        if (distToCheck < track.trackWidth * 1.15) {
           player.checkpoint = nextCheck;
           if (nextCheck === 0) {
             const lapDuration = now - player.lapStartTime;
@@ -911,7 +1039,13 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
 
               const finalPlacement = player.placement;
               const placeBaseScore =
-                finalPlacement === 1 ? 2600 : finalPlacement === 2 ? 1900 : finalPlacement === 3 ? 1300 : 850;
+                finalPlacement === 1
+                  ? 2600
+                  : finalPlacement === 2
+                    ? 1900
+                    : finalPlacement === 3
+                      ? 1300
+                      : 850;
               const timeBonus = Math.max(0, 1000 - Math.floor(player.finishTimeMs / 100));
               const totalScore = placeBaseScore + timeBonus;
 
@@ -934,14 +1068,12 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
       }
 
       // ----------------------------------------------------------------------
-      // 2. SOLO AI BOTS SIMULATION (ONLY IN SOLO MODE, NEVER IN MULTIPLAYER)
-      // Strictly skips the player car so AI logic NEVER alters player state
+      // 2. SOLO AI BOTS SIMULATION (ONLY IN SOLO MODE)
       // ----------------------------------------------------------------------
       if (!isMultiplayer && raceStarted) {
         racers.forEach((r) => {
           if (r.isPlayer || r.id === playerId || r.id === 'player' || r.finished) return;
 
-          // AI bots smoothly follow the track along their designated lane offset
           let bMinDist = Infinity;
           let bIdx = 0;
           for (let i = 0; i < SAMPLE_COUNT; i++) {
@@ -953,8 +1085,8 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
             }
           }
 
-          // Target point slightly ahead on track
-          const aheadIdx = (bIdx + 8) % SAMPLE_COUNT;
+          // Aim at track waypoint ahead
+          const aheadIdx = (bIdx + 12) % SAMPLE_COUNT;
           const aheadPt = trackSamples[aheadIdx];
           const targetX = aheadPt.x + aheadPt.nx * r.laneOffset;
           const targetY = aheadPt.y + aheadPt.ny * r.laneOffset;
@@ -964,18 +1096,18 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
           while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
           while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
 
-          r.angle += angleDiff * Math.min(1, 3.8 * dt);
+          r.angle += angleDiff * Math.min(1, 4.0 * dt);
 
           if (r.speed < r.targetSpeed) {
-            r.speed += 3.2 * dt;
+            r.speed += 3.4 * dt;
           }
 
           r.x += Math.cos(r.angle) * r.speed;
           r.y += Math.sin(r.angle) * r.speed;
 
           const nextCheck = (r.checkpoint + 1) % CHECKPOINT_COUNT;
-          const checkPt = getTrackPoint(nextCheck / CHECKPOINT_COUNT, worldCx, worldCy);
-          if (Math.hypot(r.x - checkPt.x, r.y - checkPt.y) < track.trackWidth * 1.1) {
+          const checkPt = track.getPoint(nextCheck / CHECKPOINT_COUNT);
+          if (Math.hypot(r.x - checkPt.x, r.y - checkPt.y) < track.trackWidth * 1.15) {
             r.checkpoint = nextCheck;
             if (nextCheck === 0) {
               r.lap += 1;
@@ -989,8 +1121,7 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
       }
 
       // ----------------------------------------------------------------------
-      // 3. MULTIPLAYER REMOTE OPPONENT SMOOTH SYNC (ONLY IN MULTIPLAYER)
-      // Interpolates remote player cars smoothly from validated room state
+      // 3. MULTIPLAYER REMOTE OPPONENT SYNC (ONLY IN MULTIPLAYER)
       // ----------------------------------------------------------------------
       if (isMultiplayer && raceStarted) {
         const livePlayers = roomPlayersRef.current;
@@ -1003,8 +1134,8 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
               const fractionalLap = (pct / 100) * TOTAL_LAPS;
               const t = fractionalLap % 1;
 
-              const centerPt = getTrackPoint(t, worldCx, worldCy);
-              const pNext = getTrackPoint((t + 0.005) % 1, worldCx, worldCy);
+              const centerPt = track.getPoint(t);
+              const pNext = track.getPoint((t + 0.005) % 1);
               const hAngle = Math.atan2(pNext.y - centerPt.y, pNext.x - centerPt.x);
               const nX = -Math.sin(hAngle);
               const nY = Math.cos(hAngle);
@@ -1012,7 +1143,6 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
               const targetX = centerPt.x + nX * r.laneOffset;
               const targetY = centerPt.y + nY * r.laneOffset;
 
-              // Smooth lerp to prevent teleports
               r.x += (targetX - r.x) * 0.12;
               r.y += (targetY - r.y) * 0.12;
               r.angle = hAngle;
@@ -1026,7 +1156,7 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
       }
 
       // ----------------------------------------------------------------------
-      // 4. CAR-TO-CAR ELASTIC BUMPING (Prevents cars overlapping or getting stuck)
+      // 4. CAR-TO-CAR ELASTIC BUMPING (Prevents cars overlapping)
       // ----------------------------------------------------------------------
       const CAR_RADIUS = 12;
       for (let i = 0; i < racers.length; i++) {
@@ -1050,51 +1180,52 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
       }
 
       // ----------------------------------------------------------------------
-      // 5. RANKINGS CALCULATION & PLACEMENT
+      // 5. UPDATE PROGRESS & LIVE PLACEMENT RANKING
       // ----------------------------------------------------------------------
       racers.forEach((r) => {
-        r.progressScore =
-          (r.finished ? 100000 : 0) +
-          r.lap * 1000 +
-          r.checkpoint * 60 +
-          (300 - Math.hypot(r.x - worldCx, r.y - worldCy) / 10);
-      });
-      const sorted = [...racers].sort((a, b) => b.progressScore - a.progressScore);
-      sorted.forEach((r, rankIdx) => {
-        r.placement = rankIdx + 1;
+        const completedFraction =
+          (Math.max(0, r.lap - 1) + r.checkpoint / CHECKPOINT_COUNT) / TOTAL_LAPS;
+        r.progressScore = r.finished ? 1000 + (TOTAL_LAPS - r.placement) : completedFraction * 100;
       });
 
-      // ----------------------------------------------------------------------
-      // 6. THROTTLED REACT HUD SYNC (Every ~120ms to prevent React re-renders)
-      // ----------------------------------------------------------------------
-      if (now - lastHudSyncTime > 120 && player) {
-        lastHudSyncTime = now;
-        if (raceStarted) {
+      const sortedRacers = [...racers].sort((a, b) => b.progressScore - a.progressScore);
+      sortedRacers.forEach((r, idx) => {
+        r.placement = idx + 1;
+      });
+
+      if (player) {
+        setPlayerPosition(player.placement);
+        const kmh = Math.round(player.speed * 24);
+        setCurrentSpeedKmh(kmh);
+        if (raceStarted && !player.finished) {
           setLapElapsedMs(Math.round(now - player.lapStartTime));
         }
-        setCurrentSpeedKmh(Math.round(player.speed * 32));
-        setPlayerPosition(player.placement);
-      }
 
-      // ----------------------------------------------------------------------
-      // 7. THROTTLED PROGRESS REPORTING TO PARENT (Every ~400ms)
-      // ----------------------------------------------------------------------
-      if (now - lastProgressReportTime > 400 && player && !player.finished && raceStarted) {
-        lastProgressReportTime = now;
-        if (onProgressUpdateRef.current) {
-          const racePct = Math.min(
-            100,
-            Math.round(((player.lap - 1 + player.checkpoint / CHECKPOINT_COUNT) / TOTAL_LAPS) * 100)
-          );
-          const liveScore = Math.max(10, (racers.length + 1 - player.placement) * 200 + racePct * 10);
-          onProgressUpdateRef.current(racePct, liveScore);
+        if (onProgressUpdateRef.current && raceStarted) {
+          const pct = Math.min(100, Math.round(player.progressScore));
+          const liveScore = Math.round(player.progressScore * 20);
+          onProgressUpdateRef.current(pct, liveScore);
         }
       }
 
+      // Update particles
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.alpha -= 0.035;
+        if (p.alpha <= 0) particles.splice(i, 1);
+      }
+
+      // Fade skidmarks
+      for (let i = skidmarks.length - 1; i >= 0; i--) {
+        const s = skidmarks[i];
+        s.alpha -= 0.0018;
+        if (s.alpha <= 0) skidmarks.splice(i, 1);
+      }
+
       // ----------------------------------------------------------------------
-      // 8. CANVAS RENDERING WITH RESPONSIVE VIEWPORT FIT
-      // The ENTIRE racing circuit fits cleanly inside the available viewport.
-      // Proportions are preserved. No cropping of start line, track edges or corners.
+      // 6. 2D CANVAS DRAWING (FULL SCREEN, NO EMPTY SPACES)
       // ----------------------------------------------------------------------
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const viewW = canvas.width / dpr;
@@ -1102,22 +1233,47 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
 
       ctx.save();
       ctx.scale(dpr, dpr);
-      ctx.clearRect(0, 0, viewW, viewH);
 
-      // Dedicated padding accounting for top HUD (56px) and corner controls (48px)
-      const topHudPadding = 56;
-      const bottomControlsPadding = 32;
-      const horizontalPadding = 36;
+      // FULL SCREEN BACKGROUND FILL
+      const bgGrad = ctx.createLinearGradient(0, 0, viewW, viewH);
+      if (track.theme === 'neon') {
+        bgGrad.addColorStop(0, '#050716');
+        bgGrad.addColorStop(0.5, '#0B0D2A');
+        bgGrad.addColorStop(1, '#050716');
+      } else if (track.theme === 'desert') {
+        bgGrad.addColorStop(0, '#451A03');
+        bgGrad.addColorStop(0.5, '#78350F');
+        bgGrad.addColorStop(1, '#451A03');
+      } else if (track.theme === 'cyber') {
+        bgGrad.addColorStop(0, '#04091A');
+        bgGrad.addColorStop(0.5, '#091533');
+        bgGrad.addColorStop(1, '#04091A');
+      } else if (track.theme === 'midnight') {
+        bgGrad.addColorStop(0, '#090D1A');
+        bgGrad.addColorStop(0.5, '#111827');
+        bgGrad.addColorStop(1, '#0B0F19');
+      } else {
+        // Asphalt / GP
+        bgGrad.addColorStop(0, '#062B1D');
+        bgGrad.addColorStop(0.5, '#0F3826');
+        bgGrad.addColorStop(1, '#062B1D');
+      }
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, viewW, viewH);
+
+      // Responsive track scale calculation (maximize track size on screen)
+      const topHudPadding = 64;
+      const bottomControlsPadding = 24;
+      const horizontalPadding = 18;
 
       const availW = Math.max(200, viewW - horizontalPadding * 2);
       const availH = Math.max(150, viewH - topHudPadding - bottomControlsPadding);
 
-      // Uniform scale factor guarantees track proportions are 100% preserved
       const scaleX = availW / trackBounds.totalWidth;
       const scaleY = availH / trackBounds.totalHeight;
       const fitScale = Math.min(scaleX, scaleY);
 
-      // Center the circuit in the designated playable area
+      // Center the circuit in view
       const screenCenterX = viewW / 2;
       const screenCenterY = topHudPadding + availH / 2;
 
@@ -1125,33 +1281,17 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
       ctx.translate(screenCenterX, screenCenterY);
       ctx.scale(fitScale, fitScale);
 
-      // Background Terrain (World Space)
-      const terrainMargin = 120;
-      const terrainW = trackBounds.totalWidth + terrainMargin * 2;
-      const terrainH = trackBounds.totalHeight + terrainMargin * 2;
-      ctx.fillStyle =
-        track.theme === 'desert'
-          ? '#92400E'
-          : track.theme === 'neon'
-            ? '#050814'
-            : track.theme === 'midnight'
-              ? '#0B0F19'
-              : track.theme === 'cyber'
-                ? '#0A0E1A'
-                : '#064E3B';
-      ctx.fillRect(-terrainW / 2, -terrainH / 2, terrainW, terrainH);
-
       // Inner field grass/ground
       ctx.fillStyle =
         track.theme === 'desert'
-          ? '#B45309'
+          ? '#9A3412'
           : track.theme === 'neon'
             ? '#0F172A'
             : track.theme === 'midnight'
-              ? '#111827'
+              ? '#1E293B'
               : track.theme === 'cyber'
-                ? '#0D1527'
-                : '#047857';
+                ? '#0F1E36'
+                : '#065F46';
       ctx.beginPath();
       for (let i = 0; i <= SAMPLE_COUNT; i++) {
         const pt = trackSamples[i % SAMPLE_COUNT];
@@ -1166,8 +1306,8 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
       ctx.beginPath();
       for (let i = 0; i <= SAMPLE_COUNT; i++) {
         const pt = trackSamples[i % SAMPLE_COUNT];
-        const px = pt.x + pt.nx * (halfW + 8);
-        const py = pt.y + pt.ny * (halfW + 8);
+        const px = pt.x + pt.nx * (halfW + 7);
+        const py = pt.y + pt.ny * (halfW + 7);
         if (i === 0) ctx.moveTo(px, py);
         else ctx.lineTo(px, py);
       }
@@ -1230,13 +1370,9 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
       ctx.setLineDash([]);
 
       // START / FINISH Checkered Line at t = 0
-      const startPt = getTrackPoint(0, worldCx, worldCy);
-      const startPtNext = getTrackPoint(0.005, worldCx, worldCy);
-      const startAngle = Math.atan2(startPtNext.y - startPt.y, startPtNext.x - startPt.x);
-
       ctx.save();
       ctx.translate(startPt.x, startPt.y);
-      ctx.rotate(startAngle);
+      ctx.rotate(startPt.heading);
 
       const checkBlockSize = 8;
       const checkCols = 3;
@@ -1255,48 +1391,25 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
       }
       ctx.restore();
 
-      // STARTING GRID BOX BRACKETS (Markings on Track)
-      racers.forEach((r, idx) => {
-        ctx.save();
-        ctx.translate(r.x, r.y);
-        ctx.rotate(r.angle);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(-18, -12, 36, 24);
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-        ctx.font = 'bold 9px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(`[${idx + 1}]`, -24, 3);
-        ctx.restore();
-      });
-
-      // Draw Skid Marks
+      // Draw Tire Skidmarks
       skidmarks.forEach((s) => {
         ctx.beginPath();
         ctx.moveTo(s.x1, s.y1);
         ctx.lineTo(s.x2, s.y2);
-        ctx.lineWidth = 4;
-        ctx.strokeStyle = `rgba(15, 23, 42, ${s.alpha})`;
+        ctx.strokeStyle = `rgba(15, 23, 42, ${s.alpha.toFixed(2)})`;
+        ctx.lineWidth = 3.5;
         ctx.stroke();
       });
 
-      // Draw Particles (Dust, smoke, sparks)
-      for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.alpha -= 0.025;
-        if (p.alpha <= 0) {
-          particles.splice(i, 1);
-          continue;
-        }
+      // Draw Particles (Dust, Sparks, Smoke)
+      particles.forEach((p) => {
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = Math.max(0, p.alpha);
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = p.alpha;
         ctx.fill();
-        ctx.globalAlpha = 1;
-      }
+        ctx.globalAlpha = 1.0;
+      });
 
       // Draw All Cars
       racers.forEach((r) => {
@@ -1304,28 +1417,23 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
         ctx.translate(r.x, r.y);
         ctx.rotate(r.angle);
 
-        // Ground shadow under car
-        ctx.fillStyle = 'rgba(0,0,0,0.38)';
+        // Ground Drop Shadow
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
         ctx.beginPath();
-        ctx.ellipse(-2, 4, 18, 9, 0, 0, Math.PI * 2);
+        ctx.ellipse(0, 3, 17, 9, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // 4 Racing Wheels
+        // Wheels
         ctx.fillStyle = '#0F172A';
-        ctx.fillRect(-14, -11, 9, 4);
-        ctx.fillRect(-14, 7, 9, 4);
-        ctx.fillRect(7, -11, 9, 4);
-        ctx.fillRect(7, 7, 9, 4);
+        ctx.fillRect(-13, -11, 7, 4); // Front Left
+        ctx.fillRect(-13, 7, 7, 4); // Front Right
+        ctx.fillRect(7, -11, 7, 4); // Rear Left
+        ctx.fillRect(7, 7, 7, 4); // Rear Right
 
-        // Aerodynamic Sports Car Body
+        // Car Main Chassis
         ctx.fillStyle = r.colorHex;
         ctx.beginPath();
-        ctx.moveTo(-16, -8);
-        ctx.lineTo(13, -7);
-        ctx.lineTo(21, 0);
-        ctx.lineTo(13, 7);
-        ctx.lineTo(-16, 8);
-        ctx.closePath();
+        ctx.roundRect(-16, -8, 32, 16, 5);
         ctx.fill();
 
         // White Body Outline
@@ -1345,15 +1453,15 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
 
         // Headlights
         ctx.fillStyle = '#FEF08A';
-        ctx.fillRect(18, -5, 3, 3);
-        ctx.fillRect(18, 2, 3, 3);
+        ctx.fillRect(14, -5, 3, 3);
+        ctx.fillRect(14, 2, 3, 3);
 
         // Tail brake lights glow when braking
         if (r.isBraking) {
           ctx.fillStyle = '#EF4444';
           ctx.beginPath();
-          ctx.arc(-17, -5, 3.5, 0, Math.PI * 2);
-          ctx.arc(-17, 5, 3.5, 0, Math.PI * 2);
+          ctx.arc(-16, -5, 3.5, 0, Math.PI * 2);
+          ctx.arc(-16, 5, 3.5, 0, Math.PI * 2);
           ctx.fill();
         }
 
@@ -1401,13 +1509,12 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
       window.removeEventListener('resize', updateCanvasResolution);
     };
   }, [
-    level,
+    activeLevel,
     track,
     isMultiplayer,
     playerId,
     playerColor,
     playerNickname,
-    getTrackPoint,
     trackSamples,
     trackBounds,
   ]);
@@ -1424,23 +1531,23 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
         className="absolute inset-0 h-full w-full object-contain"
       />
 
-      {/* TOP HUD BAR: Minimal, compact, clean */}
-      <div className="pointer-events-none relative z-20 flex w-full items-center justify-between px-3 pt-2 sm:px-6 sm:pt-3">
-        {/* Left: Exit & Circuit Info */}
-        <div className="flex items-center gap-2">
+      {/* TOP HUD BAR: Compact, clean, with 8 Unlocked Miniature Map Selector Icons */}
+      <div className="pointer-events-none relative z-20 flex w-full items-center justify-between px-2 pt-1.5 sm:px-4 sm:pt-2">
+        {/* Left: Exit + Lap Count */}
+        <div className="flex items-center gap-1.5 sm:gap-2">
           {onExitRequest && (
             <button
               type="button"
               onClick={onExitRequest}
-              className="pointer-events-auto flex h-9 items-center gap-1 rounded-xl border border-white/20 bg-slate-900/80 px-2.5 text-xs font-black text-white shadow-md backdrop-blur-md active:scale-95"
+              className="pointer-events-auto flex h-8 items-center gap-1 rounded-xl border border-white/20 bg-slate-900/80 px-2 text-xs font-black text-white shadow-md backdrop-blur-md active:scale-95"
               aria-label="Exit Game"
             >
-              <X className="h-4 w-4" />
+              <X className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Exit</span>
             </button>
           )}
 
-          <div className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-slate-900/80 px-3 py-1.5 shadow-md backdrop-blur-md">
+          <div className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-slate-900/80 px-2.5 py-1 shadow-md backdrop-blur-md">
             <span className="font-display text-xs font-black text-amber-400">
               LAP {currentLap}/{track.laps}
             </span>
@@ -1450,46 +1557,82 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
           </div>
         </div>
 
-        {/* Center: Position Rank Badge */}
-        <div className="flex items-center gap-2">
+        {/* Center: 8 MAP SELECTOR ICONS (All Unlocked, Tap to Play!) */}
+        <div className="pointer-events-auto flex items-center gap-1 overflow-x-auto rounded-2xl border border-white/15 bg-slate-900/85 p-1 shadow-xl backdrop-blur-md max-w-[55vw] sm:max-w-none scrollbar-none">
+          {TRACK_SVG_PATHS.map((item) => {
+            const isSelected = item.level === activeLevel;
+            return (
+              <button
+                key={item.level}
+                type="button"
+                onClick={() => {
+                  soundEngine.playClick();
+                  onLevelChange?.(item.level);
+                }}
+                className={`group relative flex flex-col items-center justify-center rounded-xl px-1.5 py-1 transition-all active:scale-95 ${
+                  isSelected
+                    ? 'border border-amber-300 bg-amber-400/20 text-amber-300 ring-2 ring-amber-400/50'
+                    : 'border border-transparent bg-white/5 text-slate-400 hover:border-white/20 hover:bg-white/10 hover:text-white'
+                }`}
+                title={`Map ${item.level}: ${item.name} (Unlocked)`}
+              >
+                {/* Miniature SVG Track Outline */}
+                <svg
+                  viewBox="0 0 44 28"
+                  className={`h-4 w-7 sm:h-5 sm:w-8 transition-transform ${
+                    isSelected ? 'scale-110' : 'opacity-70 group-hover:opacity-100'
+                  }`}
+                >
+                  <path
+                    d={item.svgPath}
+                    fill="none"
+                    stroke={isSelected ? '#F59E0B' : '#94A3B8'}
+                    strokeWidth="3.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span className="mt-0.5 text-[9px] font-black tracking-tight sm:text-[10px]">
+                  M{item.level}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Right: Rank + Speedometer + Fullscreen */}
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Position Rank */}
           <div
-            className={`flex h-9 items-center gap-1.5 rounded-xl px-3.5 font-display text-sm font-black shadow-lg backdrop-blur-md ${
+            className={`flex h-8 items-center gap-1 rounded-xl px-2.5 font-display text-xs font-black shadow-lg backdrop-blur-md ${
               playerPosition === 1
                 ? 'bg-amber-400 text-slate-950 ring-2 ring-amber-300'
                 : playerPosition === 2
                   ? 'bg-slate-200 text-slate-900'
-                  : playerPosition === 3
-                    ? 'bg-orange-400 text-slate-950'
-                    : 'bg-slate-900/80 text-white border border-white/20'
+                  : 'bg-slate-900/80 text-white border border-white/20'
             }`}
           >
-            <Trophy className="h-4 w-4" />
-            <span>POS #{playerPosition}</span>
-          </div>
-        </div>
-
-        {/* Right: Speedometer & Fullscreen Button */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2.5 rounded-xl border border-white/10 bg-slate-900/80 px-3 py-1.5 font-mono text-xs font-extrabold shadow-md backdrop-blur-md">
-            <div className="flex items-center gap-1 text-sky-400">
-              <Gauge className="h-3.5 w-3.5" />
-              <span>{currentSpeedKmh} KM/H</span>
-            </div>
-            <span className="text-slate-400">
-              {(lapElapsedMs / 1000).toFixed(1)}s
-            </span>
+            <Trophy className="h-3.5 w-3.5" />
+            <span>#{playerPosition}</span>
           </div>
 
+          {/* Speedometer */}
+          <div className="hidden items-center gap-1 rounded-xl border border-white/10 bg-slate-900/80 px-2.5 py-1 font-mono text-xs font-extrabold text-sky-400 shadow-md backdrop-blur-md sm:flex">
+            <Gauge className="h-3 w-3" />
+            <span>{currentSpeedKmh} KM/H</span>
+          </div>
+
+          {/* Fullscreen Button */}
           <button
             type="button"
             onClick={toggleFullscreen}
-            className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 bg-slate-900/80 text-white shadow-md backdrop-blur-md active:scale-95"
+            className="pointer-events-auto flex h-8 w-8 items-center justify-center rounded-xl border border-white/20 bg-slate-900/80 text-white shadow-md backdrop-blur-md active:scale-95"
             aria-label="Toggle Fullscreen"
           >
             {isFullscreen ? (
-              <Minimize2 className="h-4 w-4" />
+              <Minimize2 className="h-3.5 w-3.5" />
             ) : (
-              <Maximize2 className="h-4 w-4" />
+              <Maximize2 className="h-3.5 w-3.5" />
             )}
           </button>
         </div>
@@ -1500,26 +1643,26 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
         <div className="pointer-events-none absolute inset-0 z-40 flex flex-col items-center justify-center">
           <div
             key={countdownText}
-            className={`flex h-28 w-28 items-center justify-center rounded-full border-4 shadow-2xl backdrop-blur-md animate-pulse sm:h-36 sm:w-36 ${
+            className={`flex h-24 w-24 items-center justify-center rounded-full border-4 shadow-2xl backdrop-blur-md animate-pulse sm:h-32 sm:w-32 ${
               countdownText === 'GO!'
                 ? 'border-emerald-300 bg-emerald-500/90 text-white ring-8 ring-emerald-400/50 scale-125'
                 : 'border-amber-300 bg-slate-900/90 text-amber-300 ring-8 ring-amber-400/30'
             }`}
           >
-            <span className="font-display text-4xl font-black tracking-widest sm:text-6xl">
+            <span className="font-display text-4xl font-black tracking-widest sm:text-5xl">
               {countdownText}
             </span>
           </div>
-          <p className="mt-4 font-display text-sm font-black tracking-wider text-white uppercase drop-shadow-md sm:text-base">
+          <p className="mt-3 font-display text-xs font-black tracking-wider text-white uppercase drop-shadow-md sm:text-sm">
             {countdownText === 'GO!' ? 'RACE IS ON!' : 'GET READY ON THE GRID'}
           </p>
         </div>
       )}
 
-      {/* Celebration Finish Overlay */}
+      {/* CELEBRATION FINISH OVERLAY */}
       {raceFinished && (
-        <div className="pointer-events-auto absolute inset-0 z-40 flex flex-col items-center justify-center bg-slate-950/80 p-4 text-center backdrop-blur-sm animate-fade-in">
-          <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-amber-400 text-4xl shadow-2xl animate-bounce">
+        <div className="pointer-events-auto absolute inset-0 z-40 flex flex-col items-center justify-center bg-slate-950/85 p-4 text-center backdrop-blur-sm animate-fade-in">
+          <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-amber-400 text-3xl shadow-2xl animate-bounce">
             🏁
           </div>
           <h2 className="mt-3 font-display text-2xl font-black text-white sm:text-3xl">
@@ -1528,13 +1671,25 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
           <p className="mt-1 text-sm font-bold text-amber-300">
             Finished #{playerPosition} · Best Lap: {(bestLapMs / 1000).toFixed(2)}s
           </p>
+          <div className="mt-4 flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const nextLvl = (activeLevel % 8) + 1;
+                onLevelChange?.(nextLvl);
+              }}
+              className="rounded-xl bg-amber-400 px-4 py-2 font-display text-xs font-black text-slate-950 shadow-md hover:bg-amber-300 active:scale-95"
+            >
+              Next Map (M{(activeLevel % 8) + 1}) →
+            </button>
+          </div>
         </div>
       )}
 
       {/* LANDSCAPE CONTROLS OVERLAY:
-          - Bottom-Left: Large 360-degree Virtual Joystick (Outer Ring + Inner Follow Knob)
+          - Bottom-Left: Large 360° Virtual Joystick (Outer Ring + Inner Follow Knob)
           - Bottom-Right: Large BRAKE Button (Press and Hold) */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex items-end justify-between p-3 sm:p-6">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex items-end justify-between p-3 sm:p-5">
         {/* LEFT CORNER: 360° VIRTUAL JOYSTICK */}
         <div className="relative flex flex-col items-center">
           <div
@@ -1543,7 +1698,7 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
             onPointerMove={handleJoystickPointerMove}
             onPointerUp={handleJoystickPointerUp}
             onPointerCancel={handleJoystickPointerUp}
-            className={`pointer-events-auto relative flex h-28 w-28 items-center justify-center rounded-full border-2 border-white/30 bg-slate-900/60 shadow-2xl backdrop-blur-md transition-colors select-none sm:h-34 sm:w-34 ${
+            className={`pointer-events-auto relative flex h-28 w-28 items-center justify-center rounded-full border-2 border-white/30 bg-slate-900/60 shadow-2xl backdrop-blur-md transition-colors select-none sm:h-32 sm:w-32 ${
               joystickActive
                 ? 'border-blue-400 bg-blue-950/50 ring-4 ring-blue-500/20'
                 : 'hover:border-white/50'
@@ -1562,18 +1717,17 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
               }`}
               style={{
                 transform: `translate(${joystickPos.x}px, ${joystickPos.y}px)`,
-                transition: joystickActive ? 'none' : 'transform 0.15s ease-out',
               }}
             >
-              <Compass className="h-5 w-5 stroke-[2.5] sm:h-6 sm:w-6" />
+              <Compass className="h-5 w-5 opacity-90 sm:h-6 sm:w-6" />
             </div>
           </div>
-          <span className="mt-1 text-[10px] font-black tracking-wider text-slate-300/80 uppercase sm:text-xs">
-            Steer 360°
+          <span className="mt-1 font-mono text-[10px] font-extrabold tracking-wider text-slate-400 uppercase drop-shadow-sm">
+            360° STEER
           </span>
         </div>
 
-        {/* RIGHT CORNER: LARGE BRAKE BUTTON */}
+        {/* RIGHT CORNER: BRAKE BUTTON (PRESS AND HOLD) */}
         <div className="relative flex flex-col items-center">
           <button
             type="button"
@@ -1585,52 +1739,33 @@ export const CircularRacerCanvas: React.FC<CircularRacerCanvasProps> = ({
               e.preventDefault();
               setIsBraking(false);
             }}
+            onPointerCancel={(e) => {
+              e.preventDefault();
+              setIsBraking(false);
+            }}
             onPointerLeave={() => setIsBraking(false)}
-            onPointerCancel={() => setIsBraking(false)}
-            className={`pointer-events-auto flex h-24 w-24 flex-col items-center justify-center rounded-full border-4 border-rose-500/80 bg-gradient-to-b from-rose-600 to-rose-800 text-white shadow-2xl backdrop-blur-md active:scale-95 sm:h-30 sm:w-30 ${
+            className={`pointer-events-auto flex h-24 w-24 flex-col items-center justify-center rounded-full border-2 border-white/30 shadow-2xl backdrop-blur-md select-none transition-all active:scale-90 sm:h-28 sm:w-28 ${
               isBraking
-                ? 'border-rose-300 from-rose-500 to-rose-700 ring-4 ring-rose-400/50 scale-95'
-                : 'hover:brightness-110'
+                ? 'border-red-400 bg-red-600/90 text-white ring-4 ring-red-500/40 shadow-red-500/50 scale-95'
+                : 'bg-slate-900/70 text-slate-200 hover:border-white/50'
             }`}
             style={{ touchAction: 'none' }}
             aria-label="Hold to Brake"
           >
-            <Flame className="h-6 w-6 text-amber-200 fill-amber-300 sm:h-8 sm:w-8" />
-            <span className="font-display text-[11px] font-black tracking-wider sm:text-xs">
+            <Flame
+              className={`h-6 w-6 sm:h-7 sm:w-7 ${
+                isBraking ? 'text-amber-300 animate-pulse' : 'text-red-400'
+              }`}
+            />
+            <span className="mt-0.5 font-display text-xs font-black tracking-wider uppercase sm:text-sm">
               BRAKE
             </span>
           </button>
-          <span className="mt-1 text-[10px] font-black tracking-wider text-slate-300/80 uppercase sm:text-xs">
-            Hold to Slow
+          <span className="mt-1 font-mono text-[10px] font-extrabold tracking-wider text-slate-400 uppercase drop-shadow-sm">
+            HOLD TO SLOW
           </span>
         </div>
       </div>
-
-      {/* Gentle Mobile Rotate Prompt (Visible on phones when in portrait mode) */}
-      {showRotatePrompt && (
-        <div className="pointer-events-auto absolute inset-x-2 top-14 z-50 flex items-center justify-between gap-3 rounded-2xl border border-amber-400/40 bg-slate-900/95 p-3 text-white shadow-2xl backdrop-blur-md sm:hidden animate-fade-in">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-400 text-slate-950 font-black text-lg">
-              📱
-            </div>
-            <div>
-              <p className="text-xs font-extrabold text-amber-300">
-                Rotate Phone for Landscape View
-              </p>
-              <p className="text-[10px] font-semibold text-slate-400">
-                Circular Racer plays best in full horizontal screen
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowRotatePrompt(false)}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/10 text-slate-300 hover:bg-white/20"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      )}
     </div>
   );
 };

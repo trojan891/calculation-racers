@@ -1003,7 +1003,7 @@ export const RaceArenaPage: React.FC<RaceArenaPageProps> = ({
 
   return (
     <div
-      className={`mx-auto max-w-4xl px-2.5 py-2 sm:px-6 sm:py-4 ${
+      className={`mx-auto w-full max-w-7xl px-2.5 py-2 sm:px-6 sm:py-3 ${
         !raceFinished
           ? 'flex h-[100dvh] w-full flex-col justify-between overflow-hidden select-none'
           : ''
